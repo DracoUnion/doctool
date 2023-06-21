@@ -4,6 +4,7 @@ from os  import path
 import base64
 import os
 import hashlib
+import re
 
 GHP_TOKEN = os.environ.get('GHP_TOKEN', '')
 headers = {
@@ -31,8 +32,8 @@ def read_file(ns, repo, path):
     
 def list_org_repos(ns):
     res = []
-    while True:
-        url = f'https://api.github.com/orgs/{ns}/repos'
+    for i in range(1, 1_000_000):
+        url = f'https://api.github.com/orgs/{ns}/repos?per_page=100&page={i}'
         r = request_retry('GET', url, headers=headers)
         if r.status_code != 200: break
         j = r.json()
@@ -64,17 +65,20 @@ def main():
     for repo in repos:
         print(repo)
         rt = list_dir('opendoccn', repo, '')
-        if 'CNAME' not in rt: continue
-        cont = read_file('opendoccn', repo, 'CNAME')
-        if 'apachecn.org' not in cont: continue
-        new_cont = cont.replace('apachecn.org', 'flygon.net')
+        fname = 'README.md'
+        if fname not in rt: continue
+        cont = read_file('opendoccn', repo, fname)
+        print(cont)
+        if not re.search(r'^# ApacheCN', cont, flags=re.M): continue
+        new_cont = re.sub(r'^# ApacheCN\s*', '# 飞龙的', cont, flags=re.M)
         r = update_file(
-            'opendoccn', repo, 'CNAME', new_cont, get_blob_sha(cont))
+            'opendoccn', repo, fname, new_cont, get_blob_sha(cont))
         if r['code'] == 0:
             print(f'{repo} 修改成功')
         else:
             msg = r['msg']
             print(f'{repo} 修改失败：{msg}')
+        # return
             
 if __name__ == '__main__': main()
             
