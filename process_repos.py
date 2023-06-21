@@ -54,6 +54,85 @@ def update_file(ns, repo, path, cont, old_sha):
     else:
         return {'code': r.status_code, 'msg': r.text}
 
+def update_cname(repo, rt):
+    fname = 'CNAME'
+    if fname not in rt: return
+    cont = read_file('opendoccn', repo, fname)
+    print(cont)
+    if 'apachecn.org' not in cont: return
+    new_cont = cont.replace('apachecn.org', 'flygon.net')
+    r = update_file(
+        'opendoccn', repo, fname, new_cont, get_blob_sha(cont))
+    if r['code'] == 0:
+        print(f'{repo} {fname} 修改成功')
+    else:
+        msg = r['msg']
+        print(f'{repo} {fname} 修改失败：{msg}')
+
+def update_index(repo, rt):
+    fname = 'index.html'
+    if fname not in rt: return
+    cont = read_file('opendoccn', repo, fname)
+    print(cont)
+    new_cont = cont
+    if 'docsify-apachecn-footer' in new_cont:
+        new_cont = new_cont.replace('<script src="asset/docsify-apachecn-footer.js"></script>', '')
+    if 'apachecn/' in new_cont:
+        new_cont = new_cont.replace('apachecn/', 'opendoccn/')
+    if 'apachecn-' in new_cont:
+        new_cont = new_cont.replace('apachecn-', 'flygon-')
+    if 'ApacheCN ' in new_cont:
+        new_cont = new_cont.replace('ApacheCN ', '飞龙的')
+    new_cont = re.sub(r'([\u4e00-\u9fff])([a-zA-Z0-9])', r'\1 \2', new_cont)
+    new_cont = re.sub(r'([a-zA-Z0-9])([\u4e00-\u9fff])', r'\1 \2', new_cont)
+    if cont != new_cont:
+        r = update_file(
+            'opendoccn', repo, fname, new_cont, get_blob_sha(cont))
+        if r['code'] == 0:
+            print(f'{repo} {fname} 修改成功')
+        else:
+            msg = r['msg']
+            print(f'{repo} {fname} 修改失败：{msg}')
+
+
+def update_readme(repo, rt):
+    fname = 'README.md'
+    if fname not in rt: return
+    cont = read_file('opendoccn', repo, fname)
+    print(cont)
+    new_cont = cont
+    if '赞助我们' in new_cont:
+        new_cont = new_cont.replace(r'赞助我们', '赞助我').replace('http://data.apachecn.org/img/about/donate.jpg', 'https://img-blog.csdnimg.cn/20200112005920729.png')
+        new_cont = re.sub(r'赞助我们', '赞助我', new_cont, flags=re.M)
+    if '### PYPI'  in new_cont:
+        new_cont = re.sub(r'### PYPI[\s\S]+?(?=^### )', '', new_cont, flags=re.M)
+    if 'apachecn.org'  in new_cont:
+        new_cont = new_cont.replace('apachecn.org', 'flygon.net')
+    if 'apachecn-' in new_cont:
+        new_cont = new_cont.replace('apachecn-', 'flygon-')
+    if '## 联系方式' in new_cont:
+        new_cont = re.sub(r'## 联系方式[\s\S]+?(?=^## )', '', new_cont, flags=re.M)
+    if '## 贡献指南' in new_cont:
+        new_cont = re.sub(r'## 贡献指南[\s\S]+?(?=^## )', '', new_cont, flags=re.M)
+    if '## 其它协议' in new_cont:
+        new_cont = re.sub(r'## 其它协议[\s\S]+?(?=^## )', '', new_cont, flags=re.M)
+    if '## 目录' in new_cont:
+        new_cont = re.sub(r'## 目录[\s\S]+?(?=^## )', '', new_cont, flags=re.M)
+    if '[ApacheCN ' in new_cont:
+        new_cont = re.sub(r'^[\+\-\*]\s+\[ApacheCN.+?\]\(.+?\)\s*$\r?\n', '', new_cont, flags=re.M)
+    if '（Gitee）' in new_cont:
+        new_cont = re.sub(r'^[\+\-\*]\s+\[.+?（Gitee）\]\(.+?\)\s*$\r?\n', '', new_cont, flags=re.M)
+    new_cont = re.sub(r'([\u4e00-\u9fff])([a-zA-Z0-9])', r'\1 \2', new_cont)
+    new_cont = re.sub(r'([a-zA-Z0-9])([\u4e00-\u9fff])', r'\1 \2', new_cont)
+    if cont != new_cont:
+        r = update_file(
+            'opendoccn', repo, fname, new_cont, get_blob_sha(cont))
+        if r['code'] == 0:
+            print(f'{repo} {fname} 修改成功')
+        else:
+            msg = r['msg']
+            print(f'{repo} {fname} 修改失败：{msg}')
+
 def main():
     repos_fname = 'repos.json'
     if path.isfile(repos_fname):
@@ -65,19 +144,9 @@ def main():
     for repo in repos:
         print(repo)
         rt = list_dir('opendoccn', repo, '')
-        fname = 'README.md'
-        if fname not in rt: continue
-        cont = read_file('opendoccn', repo, fname)
-        print(cont)
-        if not re.search(r'^# ApacheCN', cont, flags=re.M): continue
-        new_cont = re.sub(r'^# ApacheCN\s*', '# 飞龙的', cont, flags=re.M)
-        r = update_file(
-            'opendoccn', repo, fname, new_cont, get_blob_sha(cont))
-        if r['code'] == 0:
-            print(f'{repo} 修改成功')
-        else:
-            msg = r['msg']
-            print(f'{repo} 修改失败：{msg}')
+        update_readme(repo, rt)
+        # update_cname(repo,rt)
+        update_index(repo,rt)
         # return
             
 if __name__ == '__main__': main()
