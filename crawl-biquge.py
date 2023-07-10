@@ -18,8 +18,6 @@ parser.add_argument("-t", "--threads", type=int, default=1, help="thread count")
 parser.add_argument("-p", "--proxy", help="proxy url")
     
 args = parser.parse_args()
-if args.proxy:
-    args.proxy = {'http': args.proxy, 'https': args.proxy}
 st, ed = args.start, args.end
 
 for i in range(st, ed + 1):
