@@ -1,5 +1,0 @@
-googletrans
-bs4
-lxml
-requests
-PyExecJS
