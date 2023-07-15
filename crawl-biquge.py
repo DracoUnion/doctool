@@ -8,7 +8,9 @@ import argparse
 import re
 import time
 import zipfile
+import traceback
 from io import BytesIO
+from concurrent.futures import ThreadPoolExecutor
 from EpubCrawler.util import request_retry
 from GenEpub import gen_epub
 
@@ -16,6 +18,7 @@ from GenEpub import gen_epub
 hdrs = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.84 Safari/537.36'
 }
+timeout = (8, 600)
 
 def get_only_txt(data):
     zip = zipfile.ZipFile(BytesIO(data))
@@ -40,6 +43,57 @@ def fmt_txt(txt):
     ]
     return chs
 
+def download_safe(*args, **kw):
+    try: download(*args, **kw)
+    except: traceback.print_exc()
+
+def download(id, pr):
+    print(f'id: {id}')
+    url = f'http://www.biqu520.net/0_{id}/'
+    while True:
+        r = request_retry(
+            'GET', url, 
+            headers=hdrs, 
+            proxies = {'http': pr, 'https': pr},
+            timeout=timeout,
+        )
+        if r.status_code // 100 == 2 or r.status_code == 404: break
+    if r.status_code == 404: 
+        print(f'小说 [id={id}] 不存在')
+        return
+    html = r.content.decode('gbk', 'ignore')
+    rt = pq(html)
+    title = rt('#info>h1').eq(0).text()
+    au = rt('#info>h1+p').text().split('：')[-1]
+    chs = rt('#list dt:nth-of-type(2) ~ dd a')
+    name = f'{title} - {au} - {len(chs)}CHS'
+    print(name)
+    ofname = name + '.epub'
+    if path.isfile(ofname):
+        print(f'{name} 已存在')
+        return
+    ts = int(time.time() * 1000)
+    dl_url = f'http://d.downnovel.com/dn/{id}/a{ts}'
+    while True:
+        r = request_retry(
+            'GET', dl_url, 
+            headers=hdrs, 
+            proxies = {'http': pr, 'https': pr},
+            timeout=timeout,
+        )
+        if r.status_code // 100 == 2 or r.status_code == 404: break
+    txt = get_only_txt(r.content)
+    if not txt:
+        print('下载失败')
+        return
+    chs = fmt_txt(txt)
+    articles = [{
+        'title': name,
+        'content': f'来源：{url}'
+    }] + chs
+    gen_epub(articles, {})
+
+
 def main():
 
     parser = argparse.ArgumentParser(prog="crawl-biquge", formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -47,44 +101,18 @@ def main():
     parser.add_argument("-s", "--start", type=int, default=1, help="starting id")
     parser.add_argument("-e", "--end", type=int, default=1_000_000, help="ending id")
     parser.add_argument("-t", "--threads", type=int, default=1, help="thread count")
-    parser.add_argument("-p", "--proxy", help="proxy url")
+    parser.add_argument("-p", "--proxy", default='', help="proxy url")
         
     args = parser.parse_args()
     st, ed = args.start, args.end
+    args.proxy = args.proxy.split(';')
 
+    pool = ThreadPoolExecutor(args.threads)
+    hdls = []
     for i in range(st, ed + 1):
-        print(f'id: {i}')
-        url = f'http://www.biqu520.net/0_{i}/'
-        while True:
-            r = requests.get(url, headers=hdrs)
-            if r.status_code // 100 == 2 or r.status_code == 404: break
-        if r.status_code == 404: 
-            print(f'小说 [id={i}] 不存在')
-            continue
-        html = r.content.decode('gbk', 'ignore')
-        rt = pq(html)
-        title = rt('#info>h1').eq(0).text()
-        au = rt('#info>h1+p').text().split('：')[-1]
-        chs = rt('#list dt:nth-of-type(2) ~ dd a')
-        name = f'{title} - {au} - {len(chs)}CHS'
-        print(name)
-        ofname = name + '.epub'
-        if path.isfile(ofname):
-            print(f'{name} 已存在')
-            continue
-        ts = int(time.time() * 1000)
-        dl_url = f'http://d.downnovel.com/dn/{i}/a{ts}'
-        while True:
-            r = request_retry('GET', dl_url, headers=hdrs)
-            if r.status_code // 100 == 2 or r.status_code == 404: break
-        txt = get_only_txt(r.content)
-        if not txt:
-            print('下载失败')
-            return
-        chs = fmt_txt(txt)
-        articles = [{
-            'title': name,
-            'content': f'来源：{url}'
-        }] + chs
-        gen_epub(articles, {})
+        pr = args.proxy[i % len(args.proxy)]
+        h = pool.submit(download, i, pr)
+        hdls.append(h)
+    for h in hdls: h.result()
+    
 if __name__ == '__main__': main()
