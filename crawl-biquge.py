@@ -32,7 +32,7 @@ def get_only_txt(data):
 def fmt_txt(txt):
     txt = re.sub(r'^.+?\r?\n', '', txt)
     txt = re.sub(r'^###(.+?)###$', r'<h1>\1</h1>', txt, flags=re.M)
-    txt = re.sub(r'^\x20{4}(.+?)$', r'<p>\1</p>', txt, flags=re.M)
+    txt = re.sub(r'^(?:\x20{4}|\u3000{2})(.+?)$', r'<p>\1</p>', txt, flags=re.M)
     chs = re.split(r'(?=<h1>)', txt)[1:]
     chs = [
         {
