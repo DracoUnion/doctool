@@ -1,6 +1,7 @@
 mv *.md D:\docs\love-course-2016-2019\docs\an-xiao-yao
 $pwd = $(pwd).ToString()
 cd D:\docs\love-course-2016-2019\
+git pull
 ./update.sh
 cd $pwd
 
