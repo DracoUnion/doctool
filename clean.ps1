@@ -1,7 +1,7 @@
 $d = 'D:\docs\love-course-2016-2019\docs\an-xiao-yao'
-mv *.md $d\..\..
+mv *.md $d
 $pwd = $(pwd).ToString()
-cd $d
+cd $d\..\..
 git pull
 ./update.sh
 cd $pwd
