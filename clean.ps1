@@ -1,11 +1,12 @@
-mv *.md D:\docs\love-course-2016-2019\docs\an-xiao-yao
+$d = 'D:\docs\love-course-2016-2019\docs\an-xiao-yao'
+mv *.md $d
 $pwd = $(pwd).ToString()
-cd D:\docs\love-course-2016-2019\
+cd $d
 git pull
 ./update.sh
 cd $pwd
 
-$li = ls -n D:\docs\love-course-2016-2019\docs\an-xiao-yao
+$li = ls -n $d
 
 $exts = @('mp4', 'mp3', 'avi', 'mkv', 'mov', 'f4v', 'm4a', 'mpeg', 'flv', 'wav', 'wma', 'aac')
 
