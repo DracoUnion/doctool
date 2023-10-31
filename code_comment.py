@@ -41,14 +41,14 @@ def process_file(args):
         return
     code = open(fname, encoding='utf8').read()
     blocks = chunk_code(code)
-    res = []
+    res = [f'# `{fname}`']
     for b in blocks:
         code = '\n'.join(b)
         comment = code_comment(code, args)
         res.append(comment)
+        res.append(f'```\n{code}\n```')
         
-    res = f'# `{fname}`\n\n```\n' + '\n'.join(res) + '\n```'
-    open(ofname, 'w', encoding='utf8').write(res)
+    open(ofname, 'w', encoding='utf8').write('\n\n'.join(res))
     
 
 def extname(name):
@@ -89,7 +89,7 @@ def chunk_code(lines):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('fname', help='file or dir name')
-    parser.add_argument('-p', '--prompt', default='请给以下代码的每一行添加注释，输出带有注释的代码：', help='prompt for code comment')
+    parser.add_argument('-p', '--prompt', default='请解释以下代码的作用，不要输出源代码：', help='prompt for code comment')
     parser.add_argument('model', help='chatglm-cpp model')
     
     args = parser.parse_args()
