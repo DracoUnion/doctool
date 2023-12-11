@@ -33,7 +33,7 @@ def trans_one(llm, tokenizer, totrans, prompt):
         ques = prompt.replace('{en}', it['en'])
         ans = llm.chat(tokenizer, ques)[0]
         it['zh'] = ans
-        print(f'ques: {json.dumps(ques, ensure_ascii=False)}\nans: {ans}')
+        print(f'ques: {json.dumps(ques, ensure_ascii=False)}\nans: {json.dumps(ans, ensure_ascii=False)}')
     return totrans
 
 def trans_handle(args):
@@ -65,7 +65,7 @@ def test_handle(args):
         args.base_path, args.model_path, args.lora_path)
     ques = args.prompt.replace('{en}', args.en)
     ans = llm.chat(tokenizer, ques)[0]
-    print(f'ques: {json.dumps(ques, ensure_ascii=False)}\nans: {ans}')
+    print(f'ques: {json.dumps(ques, ensure_ascii=False)}\nans: {json.dumps(ans, ensure_ascii=False)}')
 
 
 def train_handle(args):
