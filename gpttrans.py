@@ -6,6 +6,9 @@ import argparse
 from os import path
 import json
 
+__version__ = '2023.12.11.0'
+
+DFT_PROMPT = '请把以下文本翻译成中文，不要输出原文：{en}'
 
 def trans_one(model_name, totrans, prompt, limit=4000):
     for it in totrans:
