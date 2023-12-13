@@ -14,6 +14,8 @@ def trans_one(model_name, totrans, prompt, limit=4000):
     for it in totrans:
         if not it.get('en') or it.get('zh'):
             continue
+        if it.get('type') in ['TYPE_PRE', 'TYPE_IMG']:
+            continue
         ques = prompt.replace('{en}', it['en'])
         ans = openai.Completion.create(
             engine=model_name,
