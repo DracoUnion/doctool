@@ -1,4 +1,5 @@
 import openai
+import httpx
 import os
 import traceback
 import yaml
@@ -17,12 +18,20 @@ def trans_one(model_name, totrans, prompt, limit=4000):
         if it.get('type') in ['TYPE_PRE', 'TYPE_IMG']:
             continue
         ques = prompt.replace('{en}', it['en'])
-        ans = openai.Completion.create(
-            engine=model_name,
-            prompt=ques,
-            max_tokens=limit,
-            temperature=0
-        ).choices[0].text
+        client = openai.OpenAI(
+            api_key=openai.api_key,
+            http_client=httpx.Client(
+                proxies=openai.proxy,
+                transport=httpx.HTTPTransport(local_address="0.0.0.0"),
+            )
+        )
+        ans = client.chat.completions.create(
+            messages=[{
+                "role": "user",
+                "content": ques,
+            }],
+            model=model_name,
+        ).choices[0].message.content
         it['zh'] = ans
         print(f'ques: {json.dumps(ques, ensure_ascii=False)}\nans: {json.dumps(ans, ensure_ascii=False)}')
     return totrans
@@ -30,7 +39,7 @@ def trans_one(model_name, totrans, prompt, limit=4000):
 def trans_handle(args):
     print(args)
     openai.api_key = args.key
-    openai.proxy = {'http': args.proxy, 'https': args.proxy}
+    openai.proxy = args.proxy
     fname = args.fname
     if path.isfile(fname):
         fnames = [fname]
@@ -53,14 +62,23 @@ def trans_handle(args):
 def test_handle(args):
     print(args)
     openai.api_key = args.key
-    openai.proxy = {'http': args.proxy, 'https': args.proxy}
+    openai.proxy = args.proxy
     ques = args.prompt.replace('{en}', args.en)
-    ans = openai.Completion.create(
-        engine=args.model,
-        prompt=ques,
-        max_tokens=args.limit,
-        temperature=0
-    ).choices[0].text
+    client = openai.OpenAI(
+        api_key=openai.api_key,
+        http_client=httpx.Client(
+            proxies=openai.proxy,
+            transport=httpx.HTTPTransport(local_address="0.0.0.0"),
+        )
+    )
+    ans = client.chat.completions.create(
+        messages=[{
+            "role": "user",
+            "content": ques,
+        }],
+        model=args.model,
+    ).choices[0].message.content
+    print(ans)
     print(f'ques: {json.dumps(ques, ensure_ascii=False)}\nans: {json.dumps(ans, ensure_ascii=False)}')
     
      
