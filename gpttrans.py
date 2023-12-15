@@ -11,13 +11,46 @@ __version__ = '2023.12.11.0'
 
 DFT_PROMPT = '请把以下文本翻译成中文，不要输出原文：{en}'
 
-def trans_one(model_name, totrans, prompt, limit=4000):
+def group_totrans(totrans, limit):
+    groups = [] # [{ids: [str], ens: [str]}]
     for it in totrans:
         if not it.get('en') or it.get('zh'):
             continue
         if it.get('type') in ['TYPE_PRE', 'TYPE_IMG']:
             continue
-        ques = prompt.replace('{en}', it['en'])
+        if len(groups) == 0:
+            groups.append({
+                'ids': [it['id']],
+                'ens': [it['en']]
+            })
+        else:
+            total = len('\n'.join(groups[-1]['ens']))
+            if total + len(it['en']) <= limit:
+               groups[-1]['ids'].append(it['id']) 
+               groups[-1]['ens'].append(it['en']) 
+            else:
+                groups.append({
+                    'ids': [it['id']],
+                    'ens': [it['en']]
+                })
+    return groups
+
+def preproc_totrans(totrans):
+    for i, it in enumerate(totrans):
+        if not it.get('id'):
+            it['id'] = f'totrans-{i}'
+        if it.get('en'):
+            it['en'] = it['en'].replace('\n', '')
+
+def trans_one(model_name, totrans, prompt, limit=4000, write_callback=None):
+    # totrans: [{id?: str, en?: str, zh?: str, type: str, ...}]
+    preproc_totrans(totrans)
+    groups = group_totrans(totrans, limit)
+    totrans_id_map = {it['id']:it for it in totrans}
+    for g in groups:
+        en = '\n'.join(g['ens'])
+        ques = prompt.replace('{en}', en)
+        print(f'ques: {json.dumps(ques, ensure_ascii=False)}')
         client = openai.OpenAI(
             api_key=openai.api_key,
             http_client=httpx.Client(
@@ -32,8 +65,13 @@ def trans_one(model_name, totrans, prompt, limit=4000):
             }],
             model=model_name,
         ).choices[0].message.content
-        it['zh'] = ans
-        print(f'ques: {json.dumps(ques, ensure_ascii=False)}\nans: {json.dumps(ans, ensure_ascii=False)}')
+        print(f'ans: {json.dumps(ans, ensure_ascii=False)}')
+        zhs = [zh for zh in ans.split('\n') if zh]
+        assert len(g['ids']) == len(zhs)
+        for id, zh in zip(g['ids'], zhs):
+            totrans_id_map.get(id, {})['zh'] = zh
+        # 及时保存已翻译文本
+        if write_callback: write_callback(totrans)
     return totrans
 
 def trans_handle(args):
@@ -55,9 +93,11 @@ def trans_handle(args):
     for f in fnames:
         print(f)
         totrans = yaml.safe_load(open(f, encoding='utf8').read())
-        totrans = trans_one(args.model, totrans, args.prompt, args.limit)
-        open(f, 'w', encoding='utf8') \
-            .write(yaml.safe_dump(totrans, allow_unicode=True))
+        write_callback = lambda totrans: \
+            open(f, 'w', encoding='utf8') \
+                .write(yaml.safe_dump(totrans, allow_unicode=True))
+        trans_one(args.model, totrans, args.prompt, args.limit, write_callback)
+        
     
 def test_handle(args):
     print(args)
@@ -78,7 +118,6 @@ def test_handle(args):
         }],
         model=args.model,
     ).choices[0].message.content
-    print(ans)
     print(f'ques: {json.dumps(ques, ensure_ascii=False)}\nans: {json.dumps(ans, ensure_ascii=False)}')
     
      
