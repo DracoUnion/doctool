@@ -25,6 +25,7 @@ def trans_openai_retry(en, prompt, model_name, retry=10):
             ques = prompt.replace('{en}', en)
             print(f'ques: {json.dumps(ques, ensure_ascii=False)}')
             client = openai.OpenAI(
+                base_url=openai.host,
                 api_key=openai.api_key,
                 http_client=httpx.Client(
                     proxies=openai.proxy,
@@ -105,6 +106,7 @@ def trans_handle(args):
     print(args)
     openai.api_key = args.key
     openai.proxy = args.proxy
+    openai.host = args.host
     fname = args.fname
     if path.isfile(fname):
         fnames = [fname]
@@ -130,6 +132,7 @@ def test_handle(args):
     print(args)
     openai.api_key = args.key
     openai.proxy = args.proxy
+    openai.host = args.host
     ans = trans_openai_retry(args.en, args.prompt, args.model)
     print(f'ques: {json.dumps(ques, ensure_ascii=False)}\nans: {json.dumps(ans, ensure_ascii=False)}')
     
@@ -148,6 +151,7 @@ def main():
     trans_parser.add_argument("-l", "--limit", type=int, default=4000, help="max token limit")
     trans_parser.add_argument("-k", "--key", default=os.environ.get('OPENAI_API_KEY', ''), help="OpenAI API key")
     trans_parser.add_argument("-r", "--retry", type=int, default=10, help="times of retry")
+    trans_parser.add_argument("-H", "--host", help="api host")
     trans_parser.set_defaults(func=trans_handle)
     
     test_parser = subparsers.add_parser("test", help="testing model with YAML files")
@@ -158,6 +162,7 @@ def main():
     test_parser.add_argument("-l", "--limit", type=int, default=4000, help="max token limit")
     test_parser.add_argument("-k", "--key", default=os.environ.get('OPENAI_API_KEY', ''), help="OpenAI API key")
     test_parser.add_argument("-r", "--retry", type=int, default=10, help="times of retry")
+    test_parser.add_argument("-H", "--host", help="api host")
     test_parser.set_defaults(func=test_handle)
     
     args = parser.parse_args()
