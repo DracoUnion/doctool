@@ -64,6 +64,7 @@ def trans_one(model_name, totrans, prompt, limit=4000, write_callback=None):
                 "content": ques,
             }],
             model=model_name,
+            temperature=0,
         ).choices[0].message.content
         print(f'ans: {json.dumps(ans, ensure_ascii=False)}')
         zhs = [zh for zh in ans.split('\n') if zh]
@@ -117,6 +118,7 @@ def test_handle(args):
             "content": ques,
         }],
         model=args.model,
+        temperature=0,
     ).choices[0].message.content
     print(f'ques: {json.dumps(ques, ensure_ascii=False)}\nans: {json.dumps(ans, ensure_ascii=False)}')
     
