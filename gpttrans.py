@@ -11,6 +11,31 @@ __version__ = '2023.12.11.0'
 
 DFT_PROMPT = '请把以下文本翻译成中文，不要输出原文：{en}'
 
+def trans_openai_retry(en, prompt, model_name, retry=10):
+    for i in range(retry):
+        try:
+            ques = prompt.replace('{en}', en)
+            print(f'ques: {json.dumps(ques, ensure_ascii=False)}')
+            client = openai.OpenAI(
+                api_key=openai.api_key,
+                http_client=httpx.Client(
+                    proxies=openai.proxy,
+                    transport=httpx.HTTPTransport(local_address="0.0.0.0"),
+                )
+            )
+            ans = client.chat.completions.create(
+                messages=[{
+                    "role": "user",
+                    "content": ques,
+                }],
+                model=model_name,
+                temperature=0,
+            ).choices[0].message.content
+            return ans
+        except Exception as ex:
+            print(f'OpenAI retry {i+1}: {str(ex)}')
+            if i == retry - 1: raise ex
+    
 def group_totrans(totrans, limit):
     groups = [] # [{ids: [str], ens: [str]}]
     for it in totrans:
@@ -42,33 +67,23 @@ def preproc_totrans(totrans):
         if it.get('en'):
             it['en'] = it['en'].replace('\n', '')
 
-def trans_one(model_name, totrans, prompt, limit=4000, write_callback=None):
+def trans_one(totrans, args, write_callback=None):
     # totrans: [{id?: str, en?: str, zh?: str, type: str, ...}]
     preproc_totrans(totrans)
-    groups = group_totrans(totrans, limit)
+    groups = group_totrans(totrans, args.limit)
     totrans_id_map = {it['id']:it for it in totrans}
     for g in groups:
         en = '\n'.join(g['ens'])
-        ques = prompt.replace('{en}', en)
-        print(f'ques: {json.dumps(ques, ensure_ascii=False)}')
-        client = openai.OpenAI(
-            api_key=openai.api_key,
-            http_client=httpx.Client(
-                proxies=openai.proxy,
-                transport=httpx.HTTPTransport(local_address="0.0.0.0"),
-            )
-        )
-        ans = client.chat.completions.create(
-            messages=[{
-                "role": "user",
-                "content": ques,
-            }],
-            model=model_name,
-            temperature=0,
-        ).choices[0].message.content
-        print(f'ans: {json.dumps(ans, ensure_ascii=False)}')
-        zhs = [zh for zh in ans.split('\n') if zh]
-        assert len(g['ids']) == len(zhs)
+        for i in range(args.retry):
+            try:
+                ans = trans_openai_retry(en, args.prompt, args.model, args.retry)
+                print(f'ans: {json.dumps(ans, ensure_ascii=False)}')
+                zhs = [zh for zh in ans.split('\n') if zh]
+                assert len(g['ids']) == len(zhs)
+                break
+            except Exception as ex:
+                print(f'en-zh match retry {i+1}')
+                if i == args.retry - 1: raise ex
         for id, zh in zip(g['ids'], zhs):
             totrans_id_map.get(id, {})['zh'] = zh
         # 及时保存已翻译文本
@@ -97,29 +112,14 @@ def trans_handle(args):
         write_callback = lambda totrans: \
             open(f, 'w', encoding='utf8') \
                 .write(yaml.safe_dump(totrans, allow_unicode=True))
-        trans_one(args.model, totrans, args.prompt, args.limit, write_callback)
+        trans_one(totrans, args, write_callback)
         
     
 def test_handle(args):
     print(args)
     openai.api_key = args.key
     openai.proxy = args.proxy
-    ques = args.prompt.replace('{en}', args.en)
-    client = openai.OpenAI(
-        api_key=openai.api_key,
-        http_client=httpx.Client(
-            proxies=openai.proxy,
-            transport=httpx.HTTPTransport(local_address="0.0.0.0"),
-        )
-    )
-    ans = client.chat.completions.create(
-        messages=[{
-            "role": "user",
-            "content": ques,
-        }],
-        model=args.model,
-        temperature=0,
-    ).choices[0].message.content
+    ans = trans_openai_retry(args.en, args.prompt, args.model)
     print(f'ques: {json.dumps(ques, ensure_ascii=False)}\nans: {json.dumps(ans, ensure_ascii=False)}')
     
      
@@ -136,6 +136,7 @@ def main():
     trans_parser.add_argument("-m", "--model", default='gpt-3.5-turbo', help="model name")
     trans_parser.add_argument("-l", "--limit", type=int, default=4000, help="max token limit")
     trans_parser.add_argument("-k", "--key", default=os.environ.get('OPENAI_API_KEY', ''), help="OpenAI API key")
+    trans_parser.add_argument("-r", "--retry", type=int, default=10, help="times of retry")
     trans_parser.set_defaults(func=trans_handle)
     
     test_parser = subparsers.add_parser("test", help="testing model with YAML files")
@@ -145,6 +146,7 @@ def main():
     test_parser.add_argument("-m", "--model", default='gpt-3.5-turbo', help="model name")
     test_parser.add_argument("-l", "--limit", type=int, default=4000, help="max token limit")
     test_parser.add_argument("-k", "--key", default=os.environ.get('OPENAI_API_KEY', ''), help="OpenAI API key")
+    test_parser.add_argument("-r", "--retry", type=int, default=10, help="times of retry")
     test_parser.set_defaults(func=test_handle)
     
     args = parser.parse_args()
