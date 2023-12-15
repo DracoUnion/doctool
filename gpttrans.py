@@ -6,10 +6,18 @@ import yaml
 import argparse
 from os import path
 import json
+import random
 
 __version__ = '2023.12.11.0'
 
-DFT_PROMPT = '请把以下文本翻译成中文，不要输出原文：{en}'
+DFT_PROMPT = '请把以下文本按行翻译成中文，不要输出原文：\n\n{en}'
+
+def shuffle_group(g):
+    count = len(g['ids'])
+    idcs = list(range(count))
+    random.shuffle(idcs)
+    g['ids'] = [g['ids'][i] for i in idcs]
+    g['ens'] = [g['ens'][i] for i in idcs]
 
 def trans_openai_retry(en, prompt, model_name, retry=10):
     for i in range(retry):
@@ -73,9 +81,10 @@ def trans_one(totrans, args, write_callback=None):
     groups = group_totrans(totrans, args.limit)
     totrans_id_map = {it['id']:it for it in totrans}
     for g in groups:
-        en = '\n'.join(g['ens'])
         for i in range(args.retry):
             try:
+                shuffle_group(g)    
+                en = '\n'.join(g['ens'])
                 ans = trans_openai_retry(en, args.prompt, args.model, args.retry)
                 print(f'ans: {json.dumps(ans, ensure_ascii=False)}')
                 zhs = [zh for zh in ans.split('\n') if zh]
