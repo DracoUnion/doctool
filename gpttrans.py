@@ -49,7 +49,7 @@ def group_totrans(totrans, limit):
     for it in totrans:
         if not it.get('en') or it.get('zh'):
             continue
-        if it.get('type') in ['TYPE_PRE', 'TYPE_IMG']:
+        if it.get('type') in ['TYPE_PRE']:
             continue
         if len(groups) == 0:
             groups.append({
@@ -74,6 +74,8 @@ def preproc_totrans(totrans):
             it['id'] = f'totrans-{i}'
         if it.get('en'):
             it['en'] = it['en'].replace('\n', '')
+        if it['type'] == 'TYPE_PRE':
+            it['zh'] = it.get('en', '')
 
 def trans_one(totrans, args, write_callback=None):
     # totrans: [{id?: str, en?: str, zh?: str, type: str, ...}]
