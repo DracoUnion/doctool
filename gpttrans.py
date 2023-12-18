@@ -7,6 +7,8 @@ import argparse
 from os import path
 import json
 import random
+from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
 
 __version__ = '2023.12.11.0'
 
@@ -78,29 +80,55 @@ def preproc_totrans(totrans):
         if it['type'] == 'TYPE_PRE':
             it['zh'] = it.get('en', '')
 
+def tr_trans(g, args, totrans_id_map, write_callback=None):
+    for i in range(args.retry):
+        try:
+            shuffle_group(g)    
+            en = '\n'.join(g['ens'])
+            ans = trans_openai_retry(en, args.prompt, args.model, args.retry)
+            print(f'ans: {json.dumps(ans, ensure_ascii=False)}')
+            zhs = [zh for zh in ans.split('\n') if zh]
+            assert len(g['ids']) == len(zhs)
+            break
+        except Exception as ex:
+            print(f'en-zh match retry {i+1}')
+            if i == args.retry - 1: raise ex
+    for id, zh in zip(g['ids'], zhs):
+        totrans_id_map.get(id, {})['zh'] = zh
+    # 及时保存已翻译文本
+    if write_callback: write_callback()
+
+def tr_trans_safe(*args, **kw):
+    try:
+        tr_trans(*args, **kw)
+    except:
+        traceback.print_exc()
+
 def trans_one(totrans, args, write_callback=None):
     # totrans: [{id?: str, en?: str, zh?: str, type: str, ...}]
     preproc_totrans(totrans)
     groups = group_totrans(totrans, args.limit)
     totrans_id_map = {it['id']:it for it in totrans}
+    
+    pool = ThreadPoolExecutor(args.threads)
+    hdls = []
     for g in groups:
-        for i in range(args.retry):
-            try:
-                shuffle_group(g)    
-                en = '\n'.join(g['ens'])
-                ans = trans_openai_retry(en, args.prompt, args.model, args.retry)
-                print(f'ans: {json.dumps(ans, ensure_ascii=False)}')
-                zhs = [zh for zh in ans.split('\n') if zh]
-                assert len(g['ids']) == len(zhs)
-                break
-            except Exception as ex:
-                print(f'en-zh match retry {i+1}')
-                if i == args.retry - 1: raise ex
-        for id, zh in zip(g['ids'], zhs):
-            totrans_id_map.get(id, {})['zh'] = zh
-        # 及时保存已翻译文本
-        if write_callback: write_callback(totrans)
+        h = pool.submit(
+            tr_trans_safe, 
+            g, args, totrans_id_map, 
+            write_callback,
+        )
+        hdls.append(h)
+    for h in hdls: h.result()
     return totrans
+
+
+file_lock = Lock()
+
+def write_callback(fname, totrans):
+    with file_lock:
+        open(fname, 'w', encoding='utf8') \
+            .write(yaml.safe_dump(totrans, allow_unicode=True))
 
 def trans_handle(args):
     print(args)
@@ -122,10 +150,7 @@ def trans_handle(args):
     for f in fnames:
         print(f)
         totrans = yaml.safe_load(open(f, encoding='utf8').read())
-        write_callback = lambda totrans: \
-            open(f, 'w', encoding='utf8') \
-                .write(yaml.safe_dump(totrans, allow_unicode=True))
-        trans_one(totrans, args, write_callback)
+        trans_one(totrans, args, lambda: write_callback(f, totrans))
         
     
 def test_handle(args):
@@ -152,6 +177,7 @@ def main():
     trans_parser.add_argument("-k", "--key", default=os.environ.get('OPENAI_API_KEY', ''), help="OpenAI API key")
     trans_parser.add_argument("-r", "--retry", type=int, default=10, help="times of retry")
     trans_parser.add_argument("-H", "--host", help="api host")
+    trans_parser.add_argument("-t", "--threads", type=int, default=8, help="thread num")
     trans_parser.set_defaults(func=trans_handle)
     
     test_parser = subparsers.add_parser("test", help="testing model with YAML files")
