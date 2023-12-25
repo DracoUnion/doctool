@@ -12,9 +12,9 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 
-__version__ = '2023.12.11.0'
+__version__ = '2023.12.25.0'
 
-DFT_PROMPT = '假设你是一位资深的程序员，请你为以下代码的每一行添加注释，如果遇到了函数，再为函数添加描述其完整功能、参数和返回值的注释，注意只输出带注释的代码，除此之外不要输出额外内容。\n\n{code}'
+DFT_PROMPT = '假设你是一位资深的程序员，请你为以下代码的每个语句添加注释，解释这个语句的作用。注意只输出添加注释之后的代码，除此之外不要输出额外内容。\n\n代码：{code}'
 
 def call_openai_retry(code, prompt, model_name, retry=10):
     for i in range(retry):
