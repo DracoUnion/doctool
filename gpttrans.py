@@ -42,6 +42,7 @@ def trans_openai_retry(en, prompt, model_name, retry=10):
                 model=model_name,
                 temperature=0,
             ).choices[0].message.content
+            print(f'ans: {json.dumps(ans, ensure_ascii=False)}')
             return ans
         except Exception as ex:
             print(f'OpenAI retry {i+1}: {str(ex)}')
@@ -86,7 +87,6 @@ def tr_trans(g, args, totrans_id_map, write_callback=None):
             shuffle_group(g)    
             en = '\n'.join(g['ens'])
             ans = trans_openai_retry(en, args.prompt, args.model, args.retry)
-            print(f'ans: {json.dumps(ans, ensure_ascii=False)}')
             zhs = [zh for zh in ans.split('\n') if zh]
             assert len(g['ids']) == len(zhs)
             break
@@ -159,7 +159,6 @@ def test_handle(args):
     openai.proxy = args.proxy
     openai.host = args.host
     ans = trans_openai_retry(args.en, args.prompt, args.model)
-    print(f'ques: {json.dumps(ques, ensure_ascii=False)}\nans: {json.dumps(ans, ensure_ascii=False)}')
     
      
 def main():
