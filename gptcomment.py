@@ -14,13 +14,13 @@ from threading import Lock
 
 __version__ = '2023.12.25.0'
 
-DFT_PROMPT = '假设你是一位资深的程序员，请你为以下代码的每个语句添加注释，解释这个语句的作用。注意只输出添加注释之后的代码，除此之外不要输出额外内容。\n\n代码：{code}'
+DFT_PROMPT = '假设你是一位资深的程序员，请你为以下代码的每个语句添加注释，解释这个它的作用。注意只输出代码以及添加的注释，除此之外不要输出额外内容，也不要遗漏任何代码。\n\n代码：{code}'
 
 def call_openai_retry(code, prompt, model_name, retry=10):
     for i in range(retry):
         try:
             ques = prompt.replace('{code}', code)
-            # print(f'ques: {json.dumps(ques, ensure_ascii=False)}')
+            print(f'ques: {json.dumps(ques, ensure_ascii=False)}')
             client = openai.OpenAI(
                 base_url=openai.host,
                 api_key=openai.api_key,
@@ -37,10 +37,23 @@ def call_openai_retry(code, prompt, model_name, retry=10):
                 model=model_name,
                 temperature=0,
             ).choices[0].message.content
+            ans = re.sub(r'\A```\w*\n', '', ans)
+            ans = re.sub(r'\n```\Z', '', ans)
+            print(f'ans: {json.dumps(ans, ensure_ascii=False)}')
             return ans
         except Exception as ex:
             print(f'OpenAI retry {i+1}: {str(ex)}')
             if i == retry - 1: raise ex
+
+def chunk_code(lines):
+    if isinstance(lines, str):
+        lines = lines.split('\n')
+        
+    blocks = []
+    for i in range(0, len(lines), 50):
+        blocks.append(lines[i:i+50])
+    
+    return blocks
 
 def process_dir(args):
     dir = args.fname
@@ -70,15 +83,15 @@ def process_file(args):
     if path.isfile(ofname):
         print(f'{fname} 已存在')
         return
+    print(fname)
     code = open(fname, encoding='utf8').read()
-    # blocks = chunk_code(code)
-    # for b in blocks:
-    # code = '\n'.join(b)
-    comment = call_openai_retry(code, args.prompt, args.model, args.retry)
-    if not comment.startswith('```'):
-        comment = f'```{ext}\n' + comment
-    if not comment.endswith('```'):
-        comment = comment + '\n```'
+    blocks = chunk_code(code)
+    parts = []
+    for b in blocks:
+        code = '\n'.join(b)
+        part = call_openai_retry(code, args.prompt, args.model, args.retry)
+        parts.append(part)
+    comment = '```\n' + '\n'.join(parts) + '\n```'
     print(f'==={fname}===\n{comment}')
     res = f'# `{fname}`\n\n{comment}'
     open(ofname, 'w', encoding='utf8').write(res)
@@ -88,36 +101,6 @@ def extname(name):
     m = re.search(r'\.(\w+)$', name)
     return m.group(1) if m else ''
 
-def chunk_code(lines):
-    if isinstance(lines, str):
-        lines = lines.split('\n')
-        
-    class_mode = False
-    blocks = [[]]
-
-    for l in lines:
-        if l.startswith('^class '):
-            class_mode = True
-        elif re.search(r'^[^\(\)\[\]{}\s]', l):
-            class_mode = False
-        
-        RE_NEW_BLOCK = (
-            r'^(\x20{4}|\t)?[^\(\)\[\]{}\s]'
-            if class_mode
-            else r'^[^\(\)\[\]{}\s]'
-        )
-        if re.search(RE_NEW_BLOCK, l):
-            blocks.append([])
-        blocks[-1].append(l)
-        
-
-    for i in range(0, len(blocks) - 1):
-        if len(blocks[i]) < 15:
-            blocks[i + 1] = blocks[i] + blocks[i + 1]
-            blocks[i] = []
-            
-    blocks = [b for b in blocks if b]
-    return blocks
     
 def main():
     parser = argparse.ArgumentParser()
