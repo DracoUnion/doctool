@@ -6,7 +6,7 @@ import os
 from os import path
 import json
 
-__version__ = '2023.12.11.0'
+__version__ = '2023.12.13.0'
 
 DFT_PROMPT = '请把以下文本翻译成中文：{en}'
 
@@ -29,6 +29,8 @@ def load_pytorch_llm(base_path, model_path=None, lora_path=None):
 def trans_one(llm, tokenizer, totrans, prompt):
     for it in totrans:
         if not it.get('en') or it.get('zh'):
+            continue
+        if it.get('type') in ['TYPE_PRE', 'TYPE_IMG']:
             continue
         ques = prompt.replace('{en}', it['en'])
         ans = llm.chat(tokenizer, ques)[0]
@@ -96,7 +98,18 @@ def train_handle(args):
     llm, tokenizer = load_pytorch_llm(
         args.base_path, args.model_path, args.lora_path)
     llm.attach_lora()
-    optimizer = torch.optim.SGD(llm.parameters(), lr=args.lr)
+    optimizer = torch.optim.Adam(llm.parameters(),
+        lr=args.lr,
+        betas=(0.8, 0.999),
+        eps=1e-6,
+        weight_decay=1e-6,
+        amsgrad=True
+    )
+    scheduler = torch.optim.lr_scheduler.StepLR(
+        optimizer, 
+        step_size=args.lr_schedule_step, 
+        gamma=args.lr_schedule_gamma,
+    )
     step = 0
     for epoch in range(args.n_epoch):
         for i, dit in enumerate(ds):
@@ -117,6 +130,8 @@ def train_handle(args):
             output_ids = torch.tensor([output_ids]).cuda()
             loss = llm.forward(input_ids=input_ids, labels=output_ids, return_dict=True).loss
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(
+                model.parameters(), max_norm=0.1)
             print(
                 f'epoch: {epoch}\n' + 
                 f'step: {step}\n' + 
@@ -127,6 +142,7 @@ def train_handle(args):
             # 一定步骤再更新梯度
             if step % args.grad_accum == 0:
                 optimizer.step()
+            scheduler.step()
             # 一定步骤保存权重
             if step % args.save_step == 0:
                 torch.save(llm.lora_state_dict(), args.save_path)
@@ -159,8 +175,10 @@ def main():
     train_parser.add_argument("-l", "--lora-path", help="path for lora param")
     train_parser.add_argument("--grad-accum", type=int, default=1, help="grad_accum")
     train_parser.add_argument("--lr", type=float, default=5e-2, help="lr")
+    train_parser.add_argument("--lr-schedule-step", type=int, default=500, help="step for lr scheduler")
+    train_parser.add_argument("--lr-schedule-gamma", type=float, default=0.1, help="gamma for lr scheduler")
     train_parser.add_argument("--save-step", type=int, default=30, help="save_step")
-    train_parser.add_argument("-n", "--n-epoch", type=int, default=15, help="n_epoch")
+    train_parser.add_argument("-n", "--n-epoch", type=int, default=10, help="n_epoch")
     train_parser.add_argument("save_path", help="path to save lora param")
     train_parser.set_defaults(func=train_handle)
     
