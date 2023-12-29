@@ -68,13 +68,7 @@ def test_handle(args):
     print(f'ques: {json.dumps(ques, ensure_ascii=False)}\nans: {json.dumps(ans, ensure_ascii=False)}')
 
 
-def train_handle(args):
-    print(args)
-    # 如果没有指定 LORA 参数并且保存参数已存在
-    # 将保存参数加载为 LORA 以便继续训练
-    if path.isfile(args.save_path) and not args.lora_path:
-        args.lora_path = args.save_path
-    fname = args.fname
+def load_train_data(fname):
     if path.isfile(fname):
         fnames = [fname]
     elif path.isdir(fname):
@@ -85,14 +79,20 @@ def train_handle(args):
         ]
     else:
         raise Exception('请提供 YAML 文件或其目录')
-    ds = sum([
-        yaml.safe_load(open(f, encoding='utf8').read())
-        for f in fnames
-    ], [])
-    ds = [
-        dit for dit in ds
-        if dit.get('en') and dit.get('zh')
-    ]
+    for f in fnames:
+        ds = yaml.safe_load(open(f, encoding='utf8').read()
+        for it in ds:
+            if not(dit.get('en') and dit.get('zh')):
+                continue
+        yield dit
+
+def train_handle(args):
+    print(args)
+    # 如果没有指定 LORA 参数并且保存参数已存在
+    # 将保存参数加载为 LORA 以便继续训练
+    if path.isfile(args.save_path) and not args.lora_path:
+        args.lora_path = args.save_path
+    ds = load_train_data(args.fname)
     llm, tokenizer = load_pytorch_llm(
         args.base_path, args.model_path, args.lora_path)
     llm.attach_lora()
