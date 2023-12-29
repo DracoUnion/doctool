@@ -80,11 +80,11 @@ def load_train_data(fname):
     else:
         raise Exception('请提供 YAML 文件或其目录')
     for f in fnames:
-        ds = yaml.safe_load(open(f, encoding='utf8').read()
-        for it in ds:
+        ds = yaml.safe_load(open(f, encoding='utf8').read())
+        for dit in ds:
             if not(dit.get('en') and dit.get('zh')):
                 continue
-        yield dit
+            yield dit
 
 def train_handle(args):
     print(args)
