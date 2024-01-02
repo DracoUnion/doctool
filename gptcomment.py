@@ -14,7 +14,32 @@ from threading import Lock
 
 __version__ = '2023.12.25.0'
 
-DFT_PROMPT = '假设你是一位资深的程序员，请你为以下代码的每个语句添加注释，解释这个它的作用。注意只输出代码以及添加的注释，除此之外不要输出额外内容，也不要遗漏任何代码。\n\n代码：{code}'
+DFT_PROMPT = '''
+假设你是一位资深的程序员，请你参照示例为给定代码的每个语句添加注释，解释它们的作用。
+
+示例：
+
+```
+# 根据 ZIP 文件名读取内容，返回其中文件名到数据的字典
+def read_zip(fname):
+    # 根据 ZIP 文件名读取其二进制，封装成字节流
+    bio = BytesIO(open(fname, 'rb').read())
+    使用字节流里面内容创建 ZIP 对象
+    zip = zipfile.ZipFile(bio, 'r')
+    遍历 ZIP 对象所包含文件的文件名，读取文件数据，组成文件名到数据的字典
+    fdict = {n:zip.read(n) for n in zip.namelist()}
+    # 关闭 ZIP 对象
+    zip.close()
+    # 返回结果字典
+    return fdict
+```
+
+需要注释的代码：
+
+```
+{code}
+```
+'''
 
 def call_openai_retry(code, prompt, model_name, retry=10):
     for i in range(retry):
