@@ -70,13 +70,14 @@ def call_openai_retry(code, prompt, model_name, retry=10):
             print(f'OpenAI retry {i+1}: {str(ex)}')
             if i == retry - 1: raise ex
 
-def chunk_code(lines):
+def chunk_code(lines, limit=20):
     if isinstance(lines, str):
         lines = lines.split('\n')
         
+    lines = [l for l in lines if len(l) <= 200]
     blocks = []
-    for i in range(0, len(lines), 50):
-        blocks.append(lines[i:i+50])
+    for i in range(0, len(lines), limit):
+        blocks.append(lines[i:i+limit])
     
     return blocks
 
@@ -110,7 +111,7 @@ def process_file(args):
         return
     print(fname)
     code = open(fname, encoding='utf8').read()
-    blocks = chunk_code(code)
+    blocks = chunk_code(code, args.limit)
     parts = []
     for b in blocks:
         code = '\n'.join(b)
@@ -137,6 +138,7 @@ def main():
     parser.add_argument("-r", "--retry", type=int, default=10, help="times of retry")
     parser.add_argument("-H", "--host", help="api host")
     parser.add_argument("-t", "--threads", type=int, default=8, help="thread num")
+    parser.add_argument("-l", "--limit", type=int, default=20, help="lines limit")
     args = parser.parse_args()
     
     openai.api_key = args.key
