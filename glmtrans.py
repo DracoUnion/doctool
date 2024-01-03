@@ -92,13 +92,13 @@ def train_handle(args):
     # 将保存参数加载为 LORA 以便继续训练
     if path.isfile(args.save_path) and not args.lora_path:
         args.lora_path = args.save_path
-    ds = load_train_data(args.fname)
     llm, tokenizer = load_pytorch_llm(
         args.base_path, args.model_path, args.lora_path)
     llm.attach_lora()
     optimizer = torch.optim.SGD(llm.parameters(), lr=args.lr)
     step = 0
     for epoch in range(args.n_epoch):
+        ds = load_train_data(args.fname)
         for i, dit in enumerate(ds):
             # 组装问答和问答提示词
             ques = tokenizer.build_prompt(args.prompt.replace('{en}', dit['en']))
