@@ -127,7 +127,7 @@ def train_handle(args):
                 f'loss: {loss}'
             )
             # 更新梯度
-            torch.nn.util.clip_(llm.parameters(), 0.1)
+            torch.nn.utils.clip_grad_norm_(llm.parameters(), 0.1)
             optimizer.step()
             torch.cuda.empty_cache()
             torch.cuda.ipc_collect()
