@@ -650,6 +650,7 @@ def most_sim_li(li1, li2, full=False):
     ]
     if full:
         li1_sub = {m[0] for m in matches}
+        li2_sub = {m[1] for m in matches}
         matches += [
             [it, '']
             for it in li1
