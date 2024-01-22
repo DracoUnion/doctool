@@ -98,14 +98,25 @@ def train_handle(args):
     torch.autograd.set_detect_anomaly(True)
     optimizer = torch.optim.SGD(llm.parameters(), lr=args.lr)
     step = 0
+    skipset = set()
     for epoch in range(args.n_epoch):
         ds = load_train_data(args.fname)
         for i, dit in enumerate(ds):
             # 组装问答和问答提示词
-            ques = tokenizer.build_prompt(args.prompt.replace('{en}', dit['en']))
+            ques = args.prompt.replace('{en}', dit['en'])
+            if hasattr(tokenizer, 'build_prompt'): 
+                # ChatGLM2
+                ques = tokenizer.build_prompt(ques)
             ans = dit['zh']
+            hash_ = (hash(ques), hash(ans))
+            if hash_ in skipset: continue
             # 问答转成问答 ID
-            ques_ids = tokenizer.encode(text=ques, add_special_tokens=True, truncation=True)
+            if hasattr(tokenizer, 'build_chat_input'):
+                # ChatGLM2
+                ques_ids = tokenizer.build_chat_input(ques)['input_ids'][0].tolist()
+            else:
+                # ChatGLM2
+                ques_ids = tokenizer.encode(text=ques, add_special_tokens=True, truncation=True)
             ans_ids = tokenizer.encode(text=ans, add_special_tokens=False, truncation=True)
             # 问答 ID 拼接输入 ID
             input_ids = ques_ids + ans_ids + [tokenizer.eos_token_id]
@@ -116,16 +127,19 @@ def train_handle(args):
             optimizer.zero_grad()
             input_ids = torch.tensor([input_ids]).cuda()
             output_ids = torch.tensor([output_ids]).cuda()
-            loss = llm.forward(input_ids=input_ids, labels=output_ids, return_dict=True).loss
             with torch.autograd.detect_anomaly(): 
+                loss = llm.forward(input_ids=input_ids, labels=output_ids, return_dict=True).loss
+                print(
+                    f'epoch: {epoch}\n' + 
+                    f'step: {step}\n' + 
+                    f'ques: {json.dumps(ques, ensure_ascii=False)}\n' + 
+                    f'ans: {json.dumps(ans, ensure_ascii=False)}\n' + 
+                    f'loss: {loss}'
+                )
+                if loss < args.loss_thres: 
+                    skipset.add(hash_)
+                    continue
                 loss.backward()
-            print(
-                f'epoch: {epoch}\n' + 
-                f'step: {step}\n' + 
-                f'ques: {json.dumps(ques, ensure_ascii=False)}\n' + 
-                f'ans: {json.dumps(ans, ensure_ascii=False)}\n' + 
-                f'loss: {loss}'
-            )
             # 更新梯度
             torch.nn.utils.clip_grad_norm_(llm.parameters(), 0.1)
             optimizer.step()
@@ -163,6 +177,7 @@ def main():
     train_parser.add_argument("--save-step", type=int, default=30, help="save_step")
     train_parser.add_argument("-n", "--n-epoch", type=int, default=15, help="n_epoch")
     train_parser.add_argument("save_path", help="path to save lora param")
+    train_parser.add_argument("--loss-thres", type=float, default=5e-3, help="stop value for loss")
     train_parser.set_defaults(func=train_handle)
     
     test_parser = subparsers.add_parser("test", help="testing model with YAML files")
