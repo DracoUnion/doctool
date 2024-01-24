@@ -102,6 +102,8 @@ def train_handle(args):
     for epoch in range(args.n_epoch):
         ds = load_train_data(args.fname)
         for i, dit in enumerate(ds):
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
             # 组装问答和问答提示词
             ques = args.prompt.replace('{en}', dit['en'])
             if hasattr(tokenizer, 'build_prompt'): 
@@ -143,8 +145,6 @@ def train_handle(args):
             # 更新梯度
             torch.nn.utils.clip_grad_norm_(llm.parameters(), 0.1)
             optimizer.step()
-            torch.cuda.empty_cache()
-            torch.cuda.ipc_collect()
             # 一定步骤保存权重
             if step % args.save_step == 0:
                 torch.save(llm.lora_state_dict(), args.save_path)
