@@ -39,9 +39,12 @@ def main():
     bins = np.linspace(0, 256, 17)
     cnts, _ = np.histogram(img, bins=bins)
     freqs = cnts / np.prod(img.shape)
-    print(freqs)
-    x = (bins[1:] + bins[:-1]) / 2
-    plt.plot(x, freqs, marker='o')
-    plt.show()
+    # print(freqs)
+    # x = (bins[1:] + bins[:-1]) / 2
+    # plt.plot(x, freqs, marker='o')
+    # plt.show()
+    freqs = freqs[freqs != 0]
+    entro = np.sum(-freqs * np.log(freqs)) / np.log(16)
+    print(entro)
     
 if __name__ == '__main__': main()
