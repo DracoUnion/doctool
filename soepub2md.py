@@ -27,7 +27,7 @@ def epub2md(args):
         md = tomd(html)
         m = re.search(r'ID：(\d+)', md)
         if not m: continue
-        id_ = m.group(1)
+        id_ = m.group(1).zfill(9)
         print(id_)
         ofname = path.join(args.dir, f'{id_}.md')
         open(ofname, 'w', encoding='utf8').write(md)
