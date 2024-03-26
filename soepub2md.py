@@ -2,8 +2,8 @@ from BookerEpubTool.util import *
 from BookerMarkdownTool.tomd import tomd
 import argparse
 from pyquery import PyQuery as pq
-# from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
+# from concurrent.futures import ProcessPoolExecutor
 import time
 
 def get_title(html):
@@ -36,11 +36,14 @@ def epub2md(args):
            get_title(cont) != '-'
     ]
 
-    pool = ProcessPoolExecutor(args.threads)
+    pool = ThreadPoolExecutor(args.threads)
     hdls = []
     for html in htmls:
         hdl = pool.submit(tr_write_md, html, args.dir)
         hdls.append(hdl)
+        if len(hdls) >= args.threads:
+            for h in hdls: h.result()
+            hdls.clear()
     for h in hdls: h.result()
     
 
