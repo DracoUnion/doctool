@@ -13,6 +13,26 @@ def is_pure_color(img):
     img = cv2.imdecode(img, cv2.IMREAD_GRAYSCALE)
     return (img == 0).mean() > 0.99 or (img == 255).mean() > 0.99
 
+def get_p_size(el_p):
+    el_spans = el_p.find('span')
+    for el in [el_p] + list(el_spans):
+        el = pq(el)
+        style = el.attr('style')
+        if style:
+            m = re.search(r'font-size:\s*(\d+)', style)
+            if m: return int(m.group(1))
+    return 0
+
+def mark_title(rt):
+    el_paras = rt('p')
+    for el in el_paras:
+        el = pq(el)
+        size = get_p_size(el)
+        if size >= 14:
+            el_title = pq('<h1></h1>')
+            el_title.html(el.html())
+            el.replace_with(el_title)
+
 def merge_paras(rt):
     el_paras = rt('p')
     for el in el_paras:
@@ -24,7 +44,7 @@ def merge_paras(rt):
     for el in reversed(el_paras):
         el = pq(el)
         if el.attr('data-merge') and el.next().is_('p'):
-            el.text(el.text() + el.next().text())
+            el.html(el.html() + el.next().html())
             el.next().remove()
 
 def pdf2html(pdf_fname):
@@ -54,6 +74,7 @@ def pdf2html(pdf_fname):
         imgs[img_name] = data
         el.attr('src', 'img/' + img_name)
     merge_paras(rt)
+    mark_title(rt)
     html_fname = pdf_fname[:-4] + '.html'
     html  = str(rt)
     html = re.sub(r'style=".*?"', '', html)
