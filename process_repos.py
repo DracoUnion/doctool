@@ -83,6 +83,10 @@ def update_index(repo, rt):
         new_cont = new_cont.replace('apachecn-', 'flygon-')
     if 'ApacheCN ' in new_cont:
         new_cont = new_cont.replace('ApacheCN ', '飞龙的')
+    if re.search(r'(?<!// )alias: \{', new_cont):
+        new_cont = re.sub(r'alias: \{[\s\S]*?\},', '', new_cont)
+    if 'relativePath: ' not in new_cont:
+        new_cont = re.sub(r'(\}\s+</script>)', '  relativePath: true,\n    ' + r'\1', new_cont)
     new_cont = re.sub(r'([\u4e00-\u9fff])([a-zA-Z0-9])', r'\1 \2', new_cont)
     new_cont = re.sub(r'([a-zA-Z0-9])([\u4e00-\u9fff])', r'\1 \2', new_cont)
     if cont != new_cont:
@@ -110,6 +114,8 @@ def update_readme(repo, rt):
         new_cont = new_cont.replace('apachecn.org', 'flygon.net')
     if 'apachecn-' in new_cont:
         new_cont = new_cont.replace('apachecn-', 'flygon-')
+    if '# ApacheCN' in new_cont:
+        new_cont = new_cont.replace('# ApacheCN', '# VKDoc')
     if '## 联系方式' in new_cont:
         new_cont = re.sub(r'## 联系方式[\s\S]+?(?=^## )', '', new_cont, flags=re.M)
     if '## 贡献指南' in new_cont:
