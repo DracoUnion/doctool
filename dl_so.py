@@ -54,55 +54,72 @@ def get_article(html, base):
         'content': cont,
     }
 
+def tr_download_one_safe(*args, **kw):
+    try:
+        tr_download_one(*args, **kw)
+    except:
+        traceback.print_exc()
 
-def download(args):
-    ofname = path.join(args.dir, str(args.qid).zfill(9) + '.md')
-    if path.isfile(ofname):
-        print(f'{args.qid} 已下载')
-        return
-    print(f'qid: {args.qid}')
-    url = f'https://www.stackoverflow.org.cn/questions/{args.qid}'
-    r = request_retry('GET', url)
+def tr_download_one(qid, art_, retry):
+    print(f'qid: {qid}')
+    url = f'https://www.stackoverflow.org.cn/questions/{qid}'
+    r = request_retry('GET', url, retry=retry)
     if r.status_code == 404:
-        print(f'{args.qid} 不存在')
+        print(f'{qid} 不存在')
         return
     art = get_article(r.text, url)
     if art['title'] == '-':
-        print(f'{args.qid} 不存在')
+        print(f'{qid} 不存在')
         return
-    title, cont = art['title'], art['content']
-    html = f'<h1>{html_escape(title)}</h1>{cont}'
-    md = tomd(html)
-    open(ofname, 'w', encoding='utf8').write(md)
-    print(f'{args.qid} 下载成功')
+    art_.update(art)
+    print(f'{qid} 下载成功')
 
-def download_safe(*args, **kw):
-    try:
-        download(*args, **kw)
-    except:
-        traceback.print_exc()
+def download_batch(st, ed, dir, trnum, retry):
+    ofname = path.join(dir, f'{st:09d}-{ed:09d}.md')
+    if path.isfile(ofname):
+        print(f'{ofname} 已存在')
+        return
+    pool = ThreadPoolExecutor(trnum)
+    hdls = []
+    articles = []
+    for i in range(st, ed + 1):
+        art = {}
+        articles.append(art)
+        h = pool.submit(tr_download_one_safe, i, art, retry)
+        hdls.append(h)
+        if len(hdls) >= trnum:
+            for h in hdls: h.result()
+            hdls.clear()
+            
+    for h in hdls: h.result()
+    htmls = [
+        '<h1>' + html_escape(a['title']) + '</h1>' + a['content']
+        for a in articles if a
+    ]
+    
+    
+    html = ''.join(htmls)
+    md = f'# StackOverflow 问答 {st:09d}-{ed:09d}\n\n' + tomd(html)
+    print(ofname)
+    open(ofname, 'w', encoding='utf8').write(md)
+    
+    
+
+
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-s', '--start', type=int, default=0, help='starting id')
     parser.add_argument('-e', '--end', type=int, default=0, help='ending id')
+    parser.add_argument('-b', '--size', type=int, default=1000, help='batch size')
     parser.add_argument('-d', '--dir', default='.', help='output dir')
     parser.add_argument('-t', '--threads', type=int, default=8, help='thread num')
     parser.add_argument('-r', '--retry', type=int, default=100000, help='retry')
     args = parser.parse_args()
 
-    pool = ThreadPoolExecutor(args.threads)
-    hdls = []
-    for i in range(args.start, args.end + 1):
-        args = copy.deepcopy(args)
-        args.qid = i
-        hdl = pool.submit(download_safe, args)
-        hdls.append(hdl)
-        if len(hdls) >= args.threads:
-            for h in hdls: h.result()
-            hdls.clear()
-    for h in hdls:
-        h.result()
-        
+    st = args.start // args.size * args.size
+    ed = args.end // args.size * args.size + args.size - 1
+    for i in range(st, ed + 1, args.size):
+        download_batch(i, i + args.size - 1, args.dir, args.threads, args.retry)
 
 if __name__ == '__main__': main()
