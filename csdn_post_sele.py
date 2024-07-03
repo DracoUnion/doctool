@@ -36,9 +36,10 @@ config = {
     'condWait': 20,
 }
 
-def create_driver():
+def create_driver(headless=False):
     options = Options()
-    # options.add_argument('--headless')
+    if headless:
+        options.add_argument('--headless')
     options.add_argument('--disable-gpu')
     options.add_argument('--log-level=3')
     options.add_argument(f'--user-agent={UA}')
@@ -61,10 +62,12 @@ def csdn_post(driver: Chrome, un, pw, title, body, cate='默认分类', tags=[])
     print('页面加载完成')
     print('driver.current_url', driver.current_url)
     if driver.current_url.startswith('https://passport.csdn.net'):
+        print('添加账号密码')
         driver.find_element(By.CSS_SELECTOR, config['selectPwTab']).click()
         driver.find_element(By.CSS_SELECTOR, config['unBtn']).send_keys(un)
         driver.find_element(By.CSS_SELECTOR, config['pwBtn']).send_keys(pw)
         driver.find_element(By.CSS_SELECTOR, config['cosentCheck']).click()
+        print('登录')
         driver.find_element(By.CSS_SELECTOR, config['loginBtn']).click()
         print('等待登录后跳转')
         WebDriverWait(driver, config['condWait']).until(
@@ -78,6 +81,7 @@ def csdn_post(driver: Chrome, un, pw, title, body, cate='默认分类', tags=[])
     driver.implicitly_wait(config['impWait'])
     print('编辑器加载完成')
     print('driver.current_url', driver.current_url)
+    print('填写标题内容')
     el_title = driver.find_element(By.CSS_SELECTOR, config['titleText'])
     el_title.clear()
     el_title.send_keys(title[:100])
@@ -86,15 +90,21 @@ def csdn_post(driver: Chrome, un, pw, title, body, cate='默认分类', tags=[])
         'document.querySelector(arguments[0]).textContent = arguments[1]',
         config['bodyText'], body,
     )
+    print('点击发布按钮')
     driver.find_element(By.CSS_SELECTOR, config['postButton']).click()
+    print('等待发布对话框')
     WebDriverWait(driver, config['condWait']).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, config['pubPanel']))
     )
+    print('发布对话框已加载')
+    print('点击标签按钮')
     driver.find_element(By.CSS_SELECTOR, config['tagButton']).click()
+    print('等待标签对话框')
     WebDriverWait(driver, config['condWait']).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, config['tagPanel']))
     )
-
+    print('标签对话框已加载')
+    print('设置标签')
     el_tag_text = driver.find_element(By.CSS_SELECTOR, config['tagText'])
     for t in tags:
         el_tag_text.send_keys(t)
@@ -102,11 +112,14 @@ def csdn_post(driver: Chrome, un, pw, title, body, cate='默认分类', tags=[])
         el_tag_text.clear()
     driver.find_element(By.CSS_SELECTOR, config['tagCloseButton']).click()
 
+    print('点击类别按钮')
     driver.find_element(By.CSS_SELECTOR, config['cateBtn']).click()
+    print('等待类别对话框')
     WebDriverWait(driver, config['condWait']).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, config['catePanel']))
     )
-
+    print('类别对话框已加载')
+    print('设置类别')
     driver.find_element(By.CSS_SELECTOR, config['cateText']).send_keys(cate)
     driver.find_element(By.CSS_SELECTOR, config['cateCloseBtn']).click()
     for i in range(config['retry']):
@@ -146,6 +159,7 @@ def main():
     parser.add_argument("-p", "--pw", default=os.environ.get('CSDN_PASSWORD', ''), help="password")
     parser.add_argument("-c", "--cate", default='默认分类',  help="cate")
     parser.add_argument("-t", "--tags", default='默认标签',  help="tags")
+    parser.add_argument("-H","--headless", action='store_true', help="hdls")
     args = parser.parse_args()
 
     if path.isfile(args.fname):
@@ -160,7 +174,7 @@ def main():
         print('请提供 MD 文件或目录')
         return
     
-    driver = create_driver()
+    driver = create_driver(args.headless)
     # driver.maximize_window()
     for f in fnames:
         print(f)
