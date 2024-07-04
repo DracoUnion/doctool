@@ -1,3 +1,4 @@
+import traceback
 import argparse
 from os import path
 import time
@@ -7,6 +8,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.wait import WebDriverWait
 import selenium.webdriver.support.expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
 from BookerDownloadTool.util import *
 from BookerMarkdownTool.util import get_md_title
 
@@ -27,6 +29,7 @@ config = {
     'tagPanel': '.mark_selection_box',
     'tagText': '.mark_selection_box input',
     'cateBtn': '#tagList>button',
+    'cateDelBtn': '#tagList .tag__btn-tag-delete',
     'cateText': '#tagList span.tag__name',
     'catePanel': '.tag__options-content',
     'cateCloseBtn': '.tag__options-content button[title=关闭]',
@@ -112,13 +115,17 @@ def csdn_post(driver: Chrome, un, pw, title, body, cate='默认分类', tags=[])
         el_tag_text.clear()
     driver.find_element(By.CSS_SELECTOR, config['tagCloseButton']).click()
 
-    print('点击类别按钮')
-    driver.find_element(By.CSS_SELECTOR, config['cateBtn']).click()
-    print('等待类别对话框')
-    WebDriverWait(driver, config['condWait']).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, config['catePanel']))
-    )
-    print('类别对话框已加载')
+    print('删除已有类别')
+    for el in driver.find_elements(By.CSS_SELECTOR, config['cateDelBtn']):
+        el.click()
+    if not driver.find_elements(By.CSS_SELECTOR, config['cateText']):
+        print('点击类别按钮')
+        driver.find_element(By.CSS_SELECTOR, config['cateBtn']).click()
+        print('等待类别文本框')
+        WebDriverWait(driver, config['condWait']).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, config['cateText']))
+        )
+    print('类别文本框已加载')
     print('设置类别')
     driver.find_element(By.CSS_SELECTOR, config['cateText']).send_keys(cate)
     driver.find_element(By.CSS_SELECTOR, config['cateCloseBtn']).click()
@@ -135,11 +142,14 @@ def csdn_post(driver: Chrome, un, pw, title, body, cate='默认分类', tags=[])
         if '成功' in el_notice.text or \
            '加载中' in el_notice.text:
             print('等待成功页面')
-            WebDriverWait(driver, config['condWait']).until(
-                lambda d: '/success/' in d.current_url
-            )
-            print('发布成功')
-            break
+            try:
+                WebDriverWait(driver, config['condWait']).until(
+                    lambda d: '/success/' in d.current_url
+                )
+                print('发布成功')
+                break
+            except TimeoutException:
+                pass
         
         if i == config['retry'] - 1:
             print('发布失败')
@@ -196,5 +206,6 @@ def main():
 if __name__ == '__main__': 
     try:
         main()
-    finally:
+    except:
+        traceback.print_exc()
         time.sleep(1000)
