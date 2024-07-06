@@ -36,7 +36,7 @@ config = {
     'pubBtn': '.modal__button-bar button:last-of-type',
     'retry': 20,
     'impWait': 5,
-    'condWait': 20,
+    'condWait': 60,
 }
 
 def create_driver(headless=False):
@@ -55,6 +55,17 @@ def create_driver(headless=False):
     #     "source": stealth
     # })
     return driver
+
+def csdn_post_retry(*args, **kw):
+    for i in range(config['retry']):
+        try:
+            csdn_post(*args, **kw)
+            break
+        except Exception as ex:
+            print(f'CSDN Post Retry #{i}')
+            if i == config['retry'] - 1:
+                raise ex
+    
 
 def csdn_post(driver: Chrome, un, pw, title, body, cate='默认分类', tags=[]):
     # 登录
@@ -152,8 +163,7 @@ def csdn_post(driver: Chrome, un, pw, title, body, cate='默认分类', tags=[])
                 pass
         
         if i == config['retry'] - 1:
-            print('发布失败')
-            return
+            raise Exception('发布失败')
         time.sleep(1)
 
 
@@ -194,7 +204,7 @@ def main():
             print(f'{f} MD 文件无标题')
             return
         body = md[pos[1]:]
-        csdn_post(
+        csdn_post_retry(
             driver, 
             args.un, args.pw, 
             title, body, 
