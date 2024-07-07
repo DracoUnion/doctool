@@ -62,7 +62,7 @@ def csdn_post_retry(*args, **kw):
             csdn_post(*args, **kw)
             break
         except Exception as ex:
-            print(f'CSDN Post Retry #{i}')
+            print(f'CSDN Post Retry #{i}: {ex}')
             if i == config['retry'] - 1:
                 raise ex
     
