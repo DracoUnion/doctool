@@ -1,3 +1,4 @@
+import random
 import argparse
 import torchvision as tv
 import torch
@@ -107,15 +108,18 @@ def train_handle(args):
     step = 0
     for epoch in range(args.n_epoch):
 
+        random.shuffle(ds)
         for i in range(0, len(ds), args.batch_size):
             try:
                 torch.cuda.empty_cache()
                 torch.cuda.ipc_collect()
                 optimizer.zero_grad()
 
-                img_fnames = (
-                    open(it['img'], 'rb').read()
-                    for it in ds
+                ds_part = ds[i:i+args.batch_size]
+                img_fnames = [it['img'] for it in ds_part]
+                imgs = (
+                    open(f, 'rb').read()
+                    for f in img_fnames
                 )
                 imgs = preproc_imgs(img_fnames)
                 labels = torch.tensor([it['label'] for it in ds]).half()
