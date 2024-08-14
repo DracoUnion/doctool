@@ -40,7 +40,7 @@ def preproc_imgs(imgs):
             # HWC -> CHW
             .permute([0, 3, 1, 2])
             # BGR -> RGB
-            [:, ::-1]
+            .flip(1)
             # norm
             .div(255)
     )
@@ -63,22 +63,23 @@ def predict_handle(args):
     if not img_fnames:
         raise ValueError('请提供图片或其目录的路径')
     for i in range(0, len(img_fnames), args.batch_size):
-        imgs = (
+        imgs = [
             open(f, 'rb').read()
             for f in img_fnames
-        )
+        ]
         imgs = preproc_imgs(imgs)
         is_ppt = torch.sigmoid(model.forward(imgs)).gt(args.thres).flatten().tolist()
         for f, l in zip(img_fnames, is_ppt):
             print(f'{f} 是 PPT' if l else f'{f} 不是 PPT')
 
-def print_step_info(epoch, step, img_fnames, loss):
+def print_step_info(epoch, step, img_fnames, labels, loss):
     print(
         f'epoch: {epoch}\n' + 
         f'step: {step}'
     )
-    for i, f in enumerate(img_fnames):
+    for i, (f, l) in enumerate(zip(img_fnames, labels)):
         print(f'img#{i}: {f}')
+        print(f'label#{i}:{l}')
     print(f'loss: {loss}')
         
 def train_handle(args):
@@ -111,18 +112,19 @@ def train_handle(args):
         random.shuffle(ds)
         for i in range(0, len(ds), args.batch_size):
             try:
-                torch.cuda.empty_cache()
-                torch.cuda.ipc_collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.ipc_collect()
                 optimizer.zero_grad()
 
                 ds_part = ds[i:i+args.batch_size]
                 img_fnames = [it['img'] for it in ds_part]
-                imgs = (
+                imgs = [
                     open(f, 'rb').read()
                     for f in img_fnames
-                )
-                imgs = preproc_imgs(img_fnames)
-                labels = torch.tensor([it['label'] for it in ds]).half()
+                ]
+                imgs = preproc_imgs(imgs)
+                labels = torch.tensor([it['label'] for it in ds_part]).half()
                 if torch.cuda.is_available():
                     labels = labels.cuda()
                 
@@ -131,7 +133,7 @@ def train_handle(args):
                     labels * torch.log(torch.sigmoid((preds)))  +
                     (1 - labels) * torch.log(1 - torch.sigmoid(preds))
                 )
-                print_step_info(epoch, step, img_fnames, loss)
+                print_step_info(epoch, step, img_fnames, labels, loss)
                 
                 if loss >= args.loss_thres: 
                     loss.backward()
@@ -160,19 +162,19 @@ def main():
     train_parser.add_argument("-m", "--model-path", help="path for model param (optional)")
     train_parser.add_argument("--adam", action='store_true', help="use adam")
     train_parser.add_argument("save_path", help="path to save lora param")
-    train_parser.add_argument("--lr", type=float, default=5e-2, help="lr")
+    train_parser.add_argument("--lr", type=float, default=1e-3, help="lr")
     train_parser.add_argument("--schedule-epoch", type=int, default=1, help="lr schedule epoch")
     train_parser.add_argument("--schedule-gamma", type=float, default=0.9, help="lr schedule gamma")
     train_parser.add_argument("--save-step", type=int, default=30, help="save_step")
     train_parser.add_argument("--val-step", type=int, default=15, help="val_step")
     train_parser.add_argument("-n", "--n-epoch", type=int, default=15, help="n_epoch")
-    train_parser.add_argument("--loss-thres", type=float, default=1e-2, help="stop value for loss")
-    train_parser.add_argument("-s", "--batch-size", type=int, default=1, help="batch size")
+    train_parser.add_argument("--loss-thres", type=float, default=1e-1, help="stop value for loss")
+    train_parser.add_argument("-s", "--batch-size", type=int, default=32, help="batch size")
     train_parser.set_defaults(func=train_handle)
 
     pred_parser =  subparsers.add_parser("pred", help="pred GLM model")
     pred_parser.add_argument("fname", help="img file name or path")
-    pred_parser.add_argument("-s", "--batch-size", type=int, default=1, help="batch size")
+    pred_parser.add_argument("-s", "--batch-size", type=int, default=32, help="batch size")
     pred_parser.add_argument("-m", "--model-path", help="path for model param (optional)")
     pred_parser.add_argument("-t", "--thres", type=float, default=0.8, help="thres")
     pred_parser.set_defaults(func=predict_handle)
