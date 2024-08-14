@@ -12,7 +12,11 @@ def load_model(model_path=None, freeze_nonlast=True):
     model = tv.models.resnet18(num_classes=1)
     if model_path:
         stdc = torch.load(model_path)
-        model.load_state_dict(stdc)
+        if 'fc.weight' in stdc and stdc['fc.weight'].shape != torch.Size([1, 512]):
+            del stdc['fc.weight']
+        if 'fc.bias' in stdc and stdc['fc.bias'].shape != torch.Size([1]):
+            del stdc['fc.bias']
+        model.load_state_dict(stdc, False)
     model = model.half()
     if torch.cuda.is_available():
         model = model.cuda()
