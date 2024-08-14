@@ -59,7 +59,7 @@ def predict_handle(args):
         ]
     else:
         img_fnames = [args.fname]
-    img_fnames = [f for f in img_fnames if is_pic(img_fnames)]
+    img_fnames = [f for f in img_fnames if is_pic(f)]
     if not img_fnames:
         raise ValueError('请提供图片或其目录的路径')
     for i in range(0, len(img_fnames), args.batch_size):
@@ -173,9 +173,9 @@ def main():
     train_parser.set_defaults(func=train_handle)
 
     pred_parser =  subparsers.add_parser("pred", help="pred GLM model")
+    pred_parser.add_argument("model_path", help="path for model param")
     pred_parser.add_argument("fname", help="img file name or path")
     pred_parser.add_argument("-s", "--batch-size", type=int, default=32, help="batch size")
-    pred_parser.add_argument("-m", "--model-path", help="path for model param (optional)")
     pred_parser.add_argument("-t", "--thres", type=float, default=0.8, help="thres")
     pred_parser.set_defaults(func=predict_handle)
 
