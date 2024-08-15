@@ -130,9 +130,11 @@ def train_handle(args):
                     for f in img_fnames
                 ]
                 imgs = preproc_imgs(imgs)
+                imgs = torch.tensor(imgs).half()
                 labels = torch.tensor([it['label'] for it in ds_part]).half()
                 if torch.cuda.is_available():
                     labels = labels.cuda()
+                    imgs = imgs.cuda()
                 
                 preds = model.forward(imgs).flatten()
                 loss = - torch.mean(
