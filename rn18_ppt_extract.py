@@ -40,7 +40,7 @@ def preproc_imgs(imgs):
         for i in imgs
     ]
     imgs = (
-        torch.tensor(imgs) 
+        torch.tensor(np.asarray(imgs)) 
             # HWC -> CHW
             .permute([0, 3, 1, 2])
             # BGR -> RGB
@@ -72,9 +72,11 @@ def predict_handle(args):
             for f in img_fnames
         ]
         imgs = preproc_imgs(imgs)
-        is_ppt = torch.sigmoid(model.forward(imgs)).gt(args.thres).flatten().tolist()
-        for f, l in zip(img_fnames, is_ppt):
-            print(f'{f} 是 PPT' if l else f'{f} 不是 PPT')
+        probs = torch.sigmoid(model.forward(imgs)).flatten()
+        is_ppt = probs.gt(args.thres)
+        for f, p, l in zip(img_fnames, probs.tolist(), is_ppt.tolist()):
+            print(f'{f}: {p:.3f} ', end='')
+            print('是 PPT' if l else '不是 PPT')
 
 def print_step_info(epoch, step, img_fnames, labels, loss):
     print(
