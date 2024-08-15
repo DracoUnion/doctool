@@ -40,17 +40,14 @@ def preproc_imgs(imgs):
         for i in imgs
     ]
     imgs = (
-        torch.tensor(np.asarray(imgs)) 
+        np.asarray(imgs) 
             # HWC -> CHW
-            .permute([0, 3, 1, 2])
+            .transpose([0, 3, 1, 2])
             # BGR -> RGB
-            .flip(1)
+            [:, ::-1]
             # norm
-            .div(255)
+            .__truediv__(255)
     )
-    imgs = imgs.half()
-    if torch.cuda.is_available():
-        imgs = imgs.cuda()
     return imgs
 
 def predict_handle(args):
@@ -72,6 +69,9 @@ def predict_handle(args):
             for f in img_fnames
         ]
         imgs = preproc_imgs(imgs)
+        imgs = torch.tensor(imgs).half()
+        if torch.cuda.is_available():
+            imgs = imgs.cuda()
         probs = torch.sigmoid(model.forward(imgs)).flatten()
         is_ppt = probs.gt(args.thres)
         for f, p, l in zip(img_fnames, probs.tolist(), is_ppt.tolist()):
