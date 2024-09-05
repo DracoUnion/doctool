@@ -41,6 +41,7 @@ config = {
 
 def create_driver(headless=False):
     options = Options()
+    options.binary_location = r'D:\Program Files\chrome-for-testing\chrome.exe'
     if headless:
         options.add_argument('--headless')
     options.add_argument('--disable-gpu')
