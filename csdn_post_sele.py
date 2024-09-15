@@ -58,17 +58,19 @@ def create_driver(headless=False):
     return driver
 
 def csdn_post_retry(*args, **kw):
+    driver = create_driver(kw.pop('headless', True))
     for i in range(config['retry']):
         try:
-            csdn_post(*args, **kw)
+            csdn_post(driver, *args, **kw)
             break
         except Exception as ex:
             print(f'CSDN Post Retry #{i}: {ex}')
             if i == config['retry'] - 1:
                 raise ex
+                driver.close()
     
 
-def csdn_post(driver: Chrome, un, pw, title, body, cate='默认分类', tags=[]):
+def csdn_post(driver: Chrome, un, pw, title, body, cate='默认分类', tags=[], headless=True):
     # 登录
     print('打开登录页面')
     driver.get('https://passport.csdn.net/login')
@@ -195,7 +197,6 @@ def main():
         print('请提供 MD 文件或目录')
         return
     
-    driver = create_driver(args.headless)
     # driver.maximize_window()
     for f in fnames:
         print(f)
@@ -206,10 +207,10 @@ def main():
             return
         body = md[pos[1]:]
         csdn_post_retry(
-            driver, 
             args.un, args.pw, 
             title, body, 
-            args.cate, args.tags.split(',')
+            args.cate, args.tags.split(','),
+            headless=args.headless,
         )
 
 
