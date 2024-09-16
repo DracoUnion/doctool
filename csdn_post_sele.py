@@ -35,7 +35,6 @@ config = {
     'catePanel': '.tag__options-content',
     'cateCloseBtn': '.tag__options-content button[title=关闭]',
     'pubBtn': '.modal__button-bar button:last-of-type',
-    'retry': 20,
     'impWait': 5,
     'condWait': 60,
     'cookie_fname': 'csdn_cookie.json',
@@ -73,7 +72,7 @@ def csdn_post_retry(args, title, body):
             break
         except Exception as ex:
             print(f'CSDN Post Retry #{i}: {ex}')
-            if i == config['retry'] - 1:
+            if i == args.retry - 1:
                 raise ex
                 
     
@@ -159,7 +158,7 @@ def csdn_post(driver: Chrome, un, pw, title, body, cate='默认分类', tags=[],
     print('设置类别')
     driver.find_element(By.CSS_SELECTOR, config['cateText']).send_keys(cate)
     driver.find_element(By.CSS_SELECTOR, config['cateCloseBtn']).click()
-    for i in range(config['retry']):
+    for i in range(retry):
         print(f'发布：{i}')
         driver.find_element(By.CSS_SELECTOR, config['pubBtn']).click()
         print('等待消息提示')
@@ -232,4 +231,3 @@ if __name__ == '__main__':
         main()
     except:
         traceback.print_exc()
-        time.sleep(1000)
