@@ -63,9 +63,12 @@ def csdn_post_retry(args, title, body):
     for i in range(args.retry):
         try:
             driver = create_driver(args.headless)
-            csdn_post(driver, args.un, args.pw, 
-            title, body, 
-            args.cate, args.tags.split(','))
+            csdn_post(
+                driver, args.un, args.pw, 
+                title, body, 
+                args.cate, args.tags.split(','),
+                args.retry
+            )
             driver.close()
             break
         except Exception as ex:
@@ -75,7 +78,7 @@ def csdn_post_retry(args, title, body):
                 
     
 
-def csdn_post(driver: Chrome, un, pw, title, body, cate='默认分类', tags=[]):
+def csdn_post(driver: Chrome, un, pw, title, body, cate='默认分类', tags=[], retry=20):
     # 登录
     if path.isfile(config['cookie_fname']):
         print('导入Cookie')
@@ -178,7 +181,7 @@ def csdn_post(driver: Chrome, un, pw, title, body, cate='默认分类', tags=[])
             except TimeoutException:
                 pass
         
-        if i == config['retry'] - 1:
+        if i == retry - 1:
             raise Exception('发布失败')
         time.sleep(1)
 
