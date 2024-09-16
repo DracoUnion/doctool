@@ -3,6 +3,7 @@ import argparse
 from os import path
 import time
 import os 
+import json
 from selenium.webdriver import Chrome
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -37,6 +38,7 @@ config = {
     'retry': 20,
     'impWait': 5,
     'condWait': 60,
+    'cookie_fname': 'csdn_cookie.json',
 }
 
 def create_driver(headless=False):
@@ -75,6 +77,12 @@ def csdn_post_retry(args, title, body):
 
 def csdn_post(driver: Chrome, un, pw, title, body, cate='默认分类', tags=[]):
     # 登录
+    if path.isfile(config['cookie_fname']):
+        print('导入Cookie')
+        driver.get('https://csdn.net')
+        cookies = json.loads(open(config['cookie_fname'], encoding='utf8').read())
+        print(cookies)
+        for c in cookies: driver.add_cookie(c)
     print('打开登录页面')
     driver.get('https://passport.csdn.net/login')
     print('等待页面加载')
@@ -93,6 +101,8 @@ def csdn_post(driver: Chrome, un, pw, title, body, cate='默认分类', tags=[])
         WebDriverWait(driver, config['condWait']).until(
             lambda d: not d.current_url.startswith('https://passport.csdn.net')
         )
+        print('保存 COOKIE')
+        open(config['cookie_fname'], 'w', encoding='utf8').write(json.dumps(driver.get_cookies()))
 
     # driver.current_url
     print('打开编辑器')
