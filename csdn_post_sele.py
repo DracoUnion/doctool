@@ -58,16 +58,17 @@ def create_driver(headless=False):
     return driver
 
 def csdn_post_retry(*args, **kw):
-    driver = create_driver(kw.pop('headless', True))
     for i in range(config['retry']):
         try:
+            driver = create_driver(kw.pop('headless', True))
             csdn_post(driver, *args, **kw)
+            driver.close()
             break
         except Exception as ex:
             print(f'CSDN Post Retry #{i}: {ex}')
             if i == config['retry'] - 1:
                 raise ex
-                driver.close()
+                
     
 
 def csdn_post(driver: Chrome, un, pw, title, body, cate='默认分类', tags=[], headless=True):
