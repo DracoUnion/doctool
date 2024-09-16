@@ -57,11 +57,13 @@ def create_driver(headless=False):
     # })
     return driver
 
-def csdn_post_retry(*args, **kw):
-    for i in range(config['retry']):
+def csdn_post_retry(args, title, body):
+    for i in range(args.retry):
         try:
-            driver = create_driver(kw.pop('headless', True))
-            csdn_post(driver, *args, **kw)
+            driver = create_driver(args.headless)
+            csdn_post(driver, args.un, args.pw, 
+            title, body, 
+            args.cate, args.tags.split(','))
             driver.close()
             break
         except Exception as ex:
@@ -71,7 +73,7 @@ def csdn_post_retry(*args, **kw):
                 
     
 
-def csdn_post(driver: Chrome, un, pw, title, body, cate='默认分类', tags=[], headless=True):
+def csdn_post(driver: Chrome, un, pw, title, body, cate='默认分类', tags=[]):
     # 登录
     print('打开登录页面')
     driver.get('https://passport.csdn.net/login')
@@ -183,6 +185,7 @@ def main():
     parser.add_argument("-p", "--pw", default=os.environ.get('CSDN_PASSWORD', ''), help="password")
     parser.add_argument("-c", "--cate", default='默认分类',  help="cate")
     parser.add_argument("-t", "--tags", default='默认标签',  help="tags")
+    parser.add_argument("-r", "--retry", type=int, default=20,  help="retry")
     parser.add_argument("-H","--headless", action='store_true', help="hdls")
     args = parser.parse_args()
 
@@ -207,12 +210,7 @@ def main():
             print(f'{f} MD 文件无标题')
             return
         body = md[pos[1]:]
-        csdn_post_retry(
-            args.un, args.pw, 
-            title, body, 
-            args.cate, args.tags.split(','),
-            headless=args.headless,
-        )
+        csdn_post_retry(args, title, body)
 
 
     
