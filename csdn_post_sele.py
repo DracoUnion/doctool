@@ -223,6 +223,7 @@ def main():
             return
         body = md[pos[1]:]
         csdn_post_retry(args, title, body)
+        os.remove(f)
 
 
     
