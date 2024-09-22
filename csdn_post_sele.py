@@ -167,18 +167,18 @@ def csdn_post(driver: Chrome, un, pw, title, body, cate='默认分类', tags=[],
         )
         time.sleep(1)
         el_notice = driver.find_element(By.CSS_SELECTOR, config['noticeBox'])
-        print('消息：', el_notice.text)
-        if '成功' in el_notice.text or \
-           '加载中' in el_notice.text:
+        notice = el_notice.text
+        print('消息：', notice)
+        if '文章标签' in notice:
+            raise RuntimeError('请设置文章标签')
+        if '成功' in notice or \
+           '加载中' in notice:
             print('等待成功页面')
-            try:
-                WebDriverWait(driver, config['condWait']).until(
-                    lambda d: '/success/' in d.current_url
-                )
-                print('发布成功')
-                break
-            except TimeoutException:
-                pass
+            WebDriverWait(driver, config['condWait']).until(
+                lambda d: '/success/' in d.current_url
+            )
+            print('发布成功')
+            break
         
         if i == retry - 1:
             raise Exception('发布失败')
