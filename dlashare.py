@@ -28,6 +28,6 @@ def main():
             print(f'{code} 已存在')
             continue
         df = dl_single(code, retry)
-        df.to_csv(fname, index=False)
+        df.to_csv(fname)
         
 if __name__ == '__main__': main()
