@@ -83,7 +83,7 @@ def csdn_post(driver: Chrome, un, pw, title, body, cate='默认分类', tags=[],
         print('导入Cookie')
         driver.get('https://csdn.net')
         cookies = json.loads(open(config['cookie_fname'], encoding='utf8').read())
-        for c in cookies: c['domain'] = '.csdn.net'
+        # for c in cookies: c['domain'] = '.csdn.net'
         print(cookies)
         for c in cookies: driver.add_cookie(c)
     print('打开登录页面')
@@ -106,7 +106,7 @@ def csdn_post(driver: Chrome, un, pw, title, body, cate='默认分类', tags=[],
         )
         print('保存 COOKIE')
         cookies = driver.get_cookies()
-        for c in cookies: c['domain'] = '.csdn.net'
+        # for c in cookies: c['domain'] = '.csdn.net'
         open(config['cookie_fname'], 'w', encoding='utf8').write(json.dumps(cookies))
 
     # driver.current_url
