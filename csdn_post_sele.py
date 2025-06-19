@@ -14,7 +14,7 @@ from BookerDownloadTool.util import *
 from BookerMarkdownTool.util import get_md_title
 
 config = {
-    'selectPwTab': '.login-box-tabs-items>span:last-of-type',
+    'selectPwTab': '.login-third-passwd',
 	'unBtn': 'input[autocomplete=username]',
     'pwBtn': 'input[autocomplete=current-password]',
     'pwVisBtn': '.base-input-icon-password',
@@ -97,7 +97,7 @@ def csdn_post(driver: Chrome, un, pw, title, body, cate='默认分类', tags=[],
         driver.find_element(By.CSS_SELECTOR, config['selectPwTab']).click()
         driver.find_element(By.CSS_SELECTOR, config['unBtn']).send_keys(un)
         driver.find_element(By.CSS_SELECTOR, config['pwBtn']).send_keys(pw)
-        driver.find_element(By.CSS_SELECTOR, config['cosentCheck']).click()
+        # driver.find_element(By.CSS_SELECTOR, config['cosentCheck']).click()
         print('登录')
         driver.find_element(By.CSS_SELECTOR, config['loginBtn']).click()
         print('等待登录后跳转')
