@@ -107,11 +107,36 @@ def zhihu_post(driver: Chrome, un, pw, title, fname, retry=20):
     driver.implicitly_wait(config['impWait'])
     print('编辑器加载完成')
     print('driver.current_url', driver.current_url)
+    
+    
     print('填写标题')
     el_title = driver.find_element(By.CSS_SELECTOR, config['titleText'])
     el_title.clear()
     el_title.send_keys(title[:100])
     # driver.find_element(By.CSS_SELECTOR, config['bodyText']).send_keys(body)
+    
+    print('选择专栏')
+    # driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+    # WebDriverWait(driver, config['condWait']).until(
+    #     EC.presence_of_element_located((By.CSS_SELECTOR, config['colRadio']))
+    # )
+    # el_col = driver.find_element(By.CSS_SELECTOR, config['colRadio'])
+    # el_col.click()
+    driver.execute_script('''
+        document.querySelector(arguments[0]).click()
+    ''', config['colRadio'])
+    # el_gift = driver.find_element(By.CSS_SELECTOR, config['giftRadio'])
+    # el_gift.click()
+    
+    # driver.execute_script('''
+    #     document.querySelector(arguments[0]).click()
+    # ''', config['giftRadio'])
+    # WebDriverWait(driver, config['condWait']).until(
+    #     EC.presence_of_element_located((By.CSS_SELECTOR, config['giftBtn']))
+    # )
+    # el_gift = driver.find_element(By.CSS_SELECTOR, config['giftBtn'])
+    # el_gift.click()
+    
     print('填写内容')
     
     el_doc = driver.find_element(By.CSS_SELECTOR, config['docBtn'])
@@ -126,17 +151,10 @@ def zhihu_post(driver: Chrome, un, pw, title, fname, retry=20):
     )
     el_file = driver.find_element(By.CSS_SELECTOR, config['impFile'])
     el_file.send_keys(fname)
-    print('选择专栏')
-    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-    el_col = driver.find_element(By.CSS_SELECTOR, config['colRadio'])
-    el_col.click()
-    el_gift = driver.find_element(By.CSS_SELECTOR, config['giftRadio'])
-    el_gift.click()
     WebDriverWait(driver, config['condWait']).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, config['giftBtn']))
+        EC.presence_of_element_located((By.CSS_SELECTOR, config['titleText']))
     )
-    el_gift = driver.find_element(By.CSS_SELECTOR, config['giftBtn'])
-    el_gift.click()
+
    
     for i in range(retry):
         print(f'发布：{i}')
