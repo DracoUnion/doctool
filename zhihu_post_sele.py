@@ -155,6 +155,7 @@ def zhihu_post(driver: Chrome, un, pw, title, fname, retry=20):
     WebDriverWait(driver, config['condWait']).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, config['titleText']))
     )
+    time.sleep(10)
 
    
     for i in range(retry):
