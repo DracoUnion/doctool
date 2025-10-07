@@ -26,6 +26,7 @@ config = {
     'giftRadio': '#PublishPanel-RewardSetting-0',
     'giftBtn': '.RewardForm-rewardSubmit',
     'pubBtn': '.JmYzaky7MEPMFcJDLNMG',
+    'pubBtnDis': '.JmYzaky7MEPMFcJDLNMG[disabled]',
     'noticeBox': '.Notification',
     'impWait': 5,
     'condWait': 60,
@@ -158,7 +159,13 @@ def zhihu_post(driver: Chrome, un, pw, title, fname, retry=20):
    
     for i in range(retry):
         print(f'发布：{i}')
-        driver.find_element(By.CSS_SELECTOR, config['pubBtn']).click()
+        WebDriverWait(driver, config['condWait']).until_not(
+            EC.presence_of_element_located((By.CSS_SELECTOR, config['pubBtnDis']))
+        )
+        # driver.find_element(By.CSS_SELECTOR, config['pubBtn']).click()
+        driver.execute_script('''
+            document.querySelector(arguments[0]).click()
+        ''', config['pubBtn'])
         print('等待消息提示')
         try:
             WebDriverWait(driver, config['condWait']).until(
