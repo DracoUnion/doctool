@@ -25,6 +25,7 @@ config = {
     'titleText': '.editor-title>textarea',
     'coverRadio': '#root > div > div.left-column > div > div.form-wrap > div.form-container > div:nth-child(1) > div > div.edit-input > div > div > label:nth-child(3) > span > div',
     'pubBtn': '.publish-btn-last',
+    'msgBox': '.byte-message-wrapper',
     'impWait': 5,
     'condWait': 60,
     'cookie_fname': 'toutiao_cookie.json',
@@ -159,21 +160,23 @@ def toutiao_post(driver: Chrome, un, pw, title, body, retry=20):
         driver.execute_script('''
             document.querySelector(arguments[0]).click()
         ''', config['pubBtn'])
-        time.sleep(1)
+        time.sleep(5)
         driver.execute_script('''
             document.querySelector(arguments[0]).click()
         ''', config['pubBtn'])
         print('等待消息提示')
-        try:
-            WebDriverWait(driver, config['condWait']).until(
-                lambda d: (
-                    'publish' not in d.current_url
-                )
-            )
+
+        WebDriverWait(driver, config['condWait']).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, config['msgBox']))
+        )
+        el_msg = driver.find_element(By.CSS_SELECTOR, config['msgBox'])
+        msg = el_msg.text
+        if '成功' in msg:
             print('发布成功')
             break
-        except:
-            pass
+        else:
+            print(msg)
+       
         
         if i == retry - 1:
             raise Exception('发布失败')
