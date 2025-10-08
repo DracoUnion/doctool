@@ -159,6 +159,10 @@ def toutiao_post(driver: Chrome, un, pw, title, body, retry=20):
         driver.execute_script('''
             document.querySelector(arguments[0]).click()
         ''', config['pubBtn'])
+        time.sleep(1)
+        driver.execute_script('''
+            document.querySelector(arguments[0]).click()
+        ''', config['pubBtn'])
         print('等待消息提示')
         try:
             WebDriverWait(driver, config['condWait']).until(
