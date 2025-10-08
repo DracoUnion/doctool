@@ -28,6 +28,7 @@ config = {
     'msgBox': '.byte-message-wrapper',
     'impWait': 5,
     'condWait': 60,
+    'loopSpan': 0.5,
     'cookie_fname': 'toutiao_cookie.json',
 }
 
@@ -170,15 +171,16 @@ def toutiao_post(driver: Chrome, un, pw, title, body, retry=20):
             EC.presence_of_element_located((By.CSS_SELECTOR, config['msgBox']))
         )
         el_msg = driver.find_element(By.CSS_SELECTOR, config['msgBox'])
-        msg = ''
-        for i in range(5):
-            msg += el_msg.text
-            time.sleep(0.5)
-        if '成功' in msg:
-            print('发布成功')
-            break
-        else:
+        succ = False
+        for i in range(int(config['impWait'] // config['loopSpan'])):
+            msg = el_msg.text
+            if '成功' in msg:
+                print('发布成功')
+                succ = True
+                break
             print(msg)
+            time.sleep(config['loopSpan'])
+        if succ: break
        
         
         if i == retry - 1:
