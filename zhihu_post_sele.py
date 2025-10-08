@@ -28,6 +28,7 @@ config = {
     'pubBtn': '.JmYzaky7MEPMFcJDLNMG',
     'pubBtnDis': '.JmYzaky7MEPMFcJDLNMG[disabled]',
     'noticeBox': '.Notification',
+    'alertBtn': '.Modal-content button',
     'impWait': 5,
     'condWait': 60,
     'cookie_fname': 'zhihu_cookie.json',
@@ -139,6 +140,8 @@ def zhihu_post(driver: Chrome, un, pw, title, fname, retry=20):
     # el_gift.click()
     
     print('填写内容')
+    el_alert = driver.find_element(By.CSS_SELECTOR, config['alertBtn'])
+    if el_alert: el_alert.click()
     
     el_doc = driver.find_element(By.CSS_SELECTOR, config['docBtn'])
     el_doc.click()
