@@ -170,7 +170,10 @@ def toutiao_post(driver: Chrome, un, pw, title, body, retry=20):
             EC.presence_of_element_located((By.CSS_SELECTOR, config['msgBox']))
         )
         el_msg = driver.find_element(By.CSS_SELECTOR, config['msgBox'])
-        msg = el_msg.text
+        msg = ''
+        for i in range(5):
+            msg += el_msg.text
+            time.sleep(0.5)
         if '成功' in msg:
             print('发布成功')
             break
