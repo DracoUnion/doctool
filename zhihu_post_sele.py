@@ -22,6 +22,7 @@ config = {
 	'impBtn': '.Menu>button[aria-label="文档"]',
     'impFile': '.Modal-content input[type=file]',
     'titleText': 'textarea.Input',
+    'contText': '.DraftEditor-root',
     'colRadio': '#PublishPanel-columnLabel-1',
     'giftRadio': '#PublishPanel-RewardSetting-0',
     'giftBtn': '.RewardForm-rewardSubmit',
@@ -33,6 +34,16 @@ config = {
     'condWait': 60,
     'cookie_fname': 'zhihu_cookie.json',
 }
+
+def md2html_pandoc(md):
+    fname = path.join(tempfile.gettempdir(), uuid.uuid4().hex + '.md')
+    ofname = fname[:-3] + '.html'
+    open(fname, 'w', encoding='utf8').write(md)
+    subp.Popen(['pandoc', fname, '-o', ofname]).communicate()
+    html = open(ofname, encoding='utf8').read()
+    safe_remove(fname)
+    safe_remove(ofname)
+    return html
 
 def create_driver(headless=False):
     options = Options()
@@ -52,13 +63,13 @@ def create_driver(headless=False):
     # })
     return driver
 
-def zhihu_post_retry(args, title, fname):
+def zhihu_post_retry(args, title, body):
     for i in range(args.retry):
         try:
             driver = create_driver(args.headless)
             zhihu_post(
                 driver, args.un, args.pw, 
-                title, fname, 
+                title, body, 
                 args.retry,
             )
             driver.close()
@@ -70,7 +81,7 @@ def zhihu_post_retry(args, title, fname):
                 
     
 
-def zhihu_post(driver: Chrome, un, pw, title, fname, retry=20):
+def zhihu_post(driver: Chrome, un, pw, title, body, retry=20):
     # 登录
     if path.isfile(config['cookie_fname']):
         print('导入Cookie')
@@ -140,6 +151,11 @@ def zhihu_post(driver: Chrome, un, pw, title, fname, retry=20):
     # el_gift.click()
     
     print('填写内容')
+    html = md2html_pandoc(body)
+    driver.execute_script('''
+        document.querySelector(arguments[0]).innerHTML = arguments[1]
+    ''', config['contText'], html)
+    '''
     el_alert = driver.find_element(By.CSS_SELECTOR, config['alertBtn'])
     if el_alert: el_alert.click()
     
@@ -158,6 +174,7 @@ def zhihu_post(driver: Chrome, un, pw, title, fname, retry=20):
     WebDriverWait(driver, config['condWait']).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, config['titleText']))
     )
+    '''
     time.sleep(10)
 
    
@@ -235,9 +252,8 @@ def main():
         if not title:
             print(f'{f} MD 文件无标题')
             return
-        # body = md[pos[1]:]
-        f = path.abspath(f)
-        zhihu_post_retry(args, title, f)
+        body = md[pos[1]:]
+        zhihu_post_retry(args, title, body)
         os.remove(f)
 
 
