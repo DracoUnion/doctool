@@ -63,13 +63,13 @@ def create_driver(headless=False):
     # })
     return driver
 
-def zhihu_post_retry(args, title, body):
+def zhihu_post_retry(args, title, fname):
     for i in range(args.retry):
         try:
             driver = create_driver(args.headless)
             zhihu_post(
                 driver, args.un, args.pw, 
-                title, body, 
+                title, fname, 
                 args.retry,
             )
             driver.close()
@@ -81,7 +81,7 @@ def zhihu_post_retry(args, title, body):
                 
     
 
-def zhihu_post(driver: Chrome, un, pw, title, body, retry=20):
+def zhihu_post(driver: Chrome, un, pw, title, fname, retry=20):
     # 登录
     if path.isfile(config['cookie_fname']):
         print('导入Cookie')
@@ -151,14 +151,16 @@ def zhihu_post(driver: Chrome, un, pw, title, body, retry=20):
     # el_gift.click()
     
     print('填写内容')
-    html = md2html_pandoc(body)
-    driver.execute_script('''
-        document.querySelector(arguments[0]).innerHTML = arguments[1]
-    ''', config['contText'], html)
-    '''
+
     el_alert = driver.find_element(By.CSS_SELECTOR, config['alertBtn'])
     if el_alert: el_alert.click()
     
+    # html = md2html_pandoc(body)
+    # driver.execute_script('''
+    #     document.querySelector(arguments[0]).innerHTML = arguments[1]
+    # ''', config['contText'], html)
+    
+  
     el_doc = driver.find_element(By.CSS_SELECTOR, config['docBtn'])
     el_doc.click()
     WebDriverWait(driver, config['condWait']).until(
@@ -174,7 +176,7 @@ def zhihu_post(driver: Chrome, un, pw, title, body, retry=20):
     WebDriverWait(driver, config['condWait']).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, config['titleText']))
     )
-    '''
+    
     time.sleep(10)
 
    
@@ -252,8 +254,9 @@ def main():
         if not title:
             print(f'{f} MD 文件无标题')
             return
-        body = md[pos[1]:]
-        zhihu_post_retry(args, title, body)
+        # body = md[pos[1]:]
+        fname = path.abspath(f)
+        zhihu_post_retry(args, title, fname)
         os.remove(f)
 
 
