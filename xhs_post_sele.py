@@ -122,6 +122,9 @@ def xhs_post(driver: Chrome, un, pw, title, body, retry=20):
     
     
     print('填写标题')
+    WebDriverWait(driver, config['condWait']).until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, config['newBtn']))
+    )
     driver.find_element(By.CSS_SELECTOR, config['newBtn']).click()
     WebDriverWait(driver, config['condWait']).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, config['titleText']))
@@ -215,9 +218,9 @@ def main():
             path.join(args.fname, f)
             for f in os.listdir(args.fname)
         ]
-    fnames = [f for f in fnames if f.endswith('.txt')]
+    fnames = [f for f in fnames if f.endswith('_xhs.txt')]
     if not fnames:
-        print('请提供 TXT 文件或目录')
+        print('请提供小红书 TXT 文件或目录')
         return
     
     # driver.maximize_window()
@@ -230,7 +233,7 @@ def main():
             return 
         title = m.group(1)
         pos = m.span()[1]
-        body = txt[pos[1]:]
+        body = txt[pos:]
         xhs_post_retry(args, title, body)
         os.remove(f)
 
