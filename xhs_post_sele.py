@@ -129,9 +129,14 @@ def xhs_post(driver: Chrome, un, pw, title, body, retry=20):
     WebDriverWait(driver, config['condWait']).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, config['titleText']))
     )
+    '''
     el_title = driver.find_element(By.CSS_SELECTOR, config['titleText'])
     el_title.clear()
     el_title.send_keys(title[:100])
+    '''
+    driver.execute_script('''
+        document.querySelector(arguments[0]).value = arguments[1]
+    ''', config['titleText'], title[:100])
     # driver.find_element(By.CSS_SELECTOR, config['bodyText']).send_keys(body)
     
     print('填写内容')
