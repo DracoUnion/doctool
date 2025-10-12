@@ -22,6 +22,7 @@ config = {
     'loginBtn': '.JmYzaky7MEPMFcJDLNMG',
     'newBtn': '.new-btn',
     'titleText': 'textarea[placeholder="输入标题"]',
+    'titleText2': 'textarea[placeholder="输入标题"] + textarea',
     'contText': 'div[contenteditable="true"]',
     'nextBtn': '.next-btn',
     'cusBtn': '.custom-button',
@@ -135,7 +136,9 @@ def xhs_post(driver: Chrome, un, pw, title, body, retry=20):
     el_title.send_keys(title[:100])
     '''
     driver.execute_script('''
-        document.querySelector(arguments[0]).value = arguments[1]
+        var el = document.querySelector(arguments[0]) 
+        el.value = arguments[1]
+        el.dispatchEvent(new Event('input', {bubbles: true}))
     ''', config['titleText'], title[:100])
     # driver.find_element(By.CSS_SELECTOR, config['bodyText']).send_keys(body)
     
