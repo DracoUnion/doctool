@@ -120,6 +120,8 @@ def xhs_post(driver: Chrome, un, pw, title, body, retry=20):
     print('等待编辑器加载')
     driver.implicitly_wait(config['impWait'])
     print('编辑器加载完成')
+    if 'login' in driver.current_url:
+        raise ValueError('登录失败，未知错误')
     print('driver.current_url', driver.current_url)
     
     
