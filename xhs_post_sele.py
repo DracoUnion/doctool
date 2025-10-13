@@ -25,8 +25,9 @@ config = {
     'titleText2': 'textarea[placeholder="输入标题"] + textarea',
     'contText': 'div[contenteditable="true"]',
     'nextBtn': '.next-btn',
+    'loadingCard': '.loading-card',
     'cusBtn': '.custom-button',
-    'tmplList': '.template-list',
+    'tmplCard': '.template-card',
     'pubBtn': '.publishBtn',
     'impWait': 5,
     'condWait': 60,
@@ -148,25 +149,37 @@ def xhs_post(driver: Chrome, un, pw, title, body, retry=20):
     driver.execute_script('''
         document.querySelector(arguments[0]).innerHTML = arguments[1]
     ''', config['contText'], html)
-    
+    print('下一步')
     driver.find_element(By.CSS_SELECTOR, config['nextBtn']).click()
     
     print('选择模版')
-    WebDriverWait(driver, config['condWait']).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, config['tmplList']))
+    WebDriverWait(driver, config['condWait']).until_not(
+        EC.presence_of_element_located((By.CSS_SELECTOR, config['loadingCard']))
     )
-    el_tmpls = driver.find_elements(By.CSS_SELECTOR, config['tmplList'] + ' > *')
-    random.choice(el_tmpls).click()
+
+    driver.execute_script('''
+        var els = document.querySelectorAll(arguments[0])
+        var idx = Math.floor(Math.random() * els.length)
+        els[idx].click()
+    ''', config['tmplCard'])
     
-    driver.find_element(By.CSS_SELECTOR, config['cusBtn']).click()
+    print('下一步')
+    WebDriverWait(driver, config['condWait']).until(
+        EC.element_to_be_clickable((By.CSS_SELECTOR, config['cusBtn']))
+    )
+    driver.execute_script('''
+        document.querySelector(arguments[0]).click()
+    ''', config['cusBtn'])
+    # driver.find_element(By.CSS_SELECTOR, config['cusBtn']).click()
     
     print('填写摘要')
     WebDriverWait(driver, config['condWait']).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, config['contText']))
+        EC.presence_of_element_located((By.CSS_SELECTOR, config['pubBtn']))
     )
     driver.execute_script('''
         document.querySelector(arguments[0]).innerHTML = arguments[1]
     ''', config['contText'], html)
+    time.sleep(1)
     
 
    
@@ -177,7 +190,7 @@ def xhs_post(driver: Chrome, un, pw, title, body, retry=20):
         try:
             WebDriverWait(driver, config['condWait']).until(
                 lambda d: (
-                    'publish' not in d.current_url
+                    'success' in d.current_url
                 )
             )
             print('发布成功')
