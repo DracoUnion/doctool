@@ -26,7 +26,8 @@ config = {
     'contText': 'div[contenteditable="true"]',
     'nextBtn': '.next-btn',
     'loadingCard': '.loading-card',
-    'cusBtn': '.custom-button',
+    'cusBtn': 'div.footer > .custom-button',
+    'cusBtnDis': 'div.footer > .custom-button[disabled]',
     'tmplCard': '.template-card',
     'pubBtn': '.publishBtn',
     'impWait': 5,
@@ -166,9 +167,10 @@ def xhs_post(driver: Chrome, un, pw, title, body, retry=20):
     ''', config['tmplCard'])
     
     print('下一步')
-    WebDriverWait(driver, config['condWait']).until(
-        EC.element_to_be_clickable((By.CSS_SELECTOR, config['cusBtn']))
+    WebDriverWait(driver, config['condWait']).until_not(
+        EC.presence_of_element_located((By.CSS_SELECTOR, config['cusBtnDis']))
     )
+    
     driver.execute_script('''
         document.querySelector(arguments[0]).click()
     ''', config['cusBtn'])
