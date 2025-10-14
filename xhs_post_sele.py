@@ -258,7 +258,7 @@ def main():
             return 
         title = m.group(1)
         pos = m.span()[1]
-        body = txt[pos:]
+        body = txt[pos:][:1000]
         xhs_post_retry(args, title, body)
         os.remove(f)
 
