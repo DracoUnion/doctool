@@ -30,10 +30,14 @@ config = {
     'cusBtnDis': 'div.footer > .custom-button[disabled]',
     'tmplCard': '.template-card',
     'pubBtn': '.publishBtn',
+    'notice': '.d-toast-notice',
     'impWait': 5,
     'condWait': 60,
     'cookie_fname': 'xhs_cooklie.json',
 }
+
+def txt2html(body):
+    return re.sub(r'^(.+?)$', r'<p>\1</p>', body, flags=re.M)
 
 def md2html_pandoc(md):
     fname = path.join(tempfile.gettempdir(), uuid.uuid4().hex + '.md')
@@ -148,7 +152,7 @@ def xhs_post(driver: Chrome, un, pw, title, body, retry=20):
     
     print('填写内容')
     
-    html = re.sub(r'^(.+?)$', r'<p>\1</p>', body, flags=re.M)
+    html = txt2html(body)
     driver.execute_script('''
         document.querySelector(arguments[0]).innerHTML = arguments[1]
     ''', config['contText'], html)
@@ -180,6 +184,7 @@ def xhs_post(driver: Chrome, un, pw, title, body, retry=20):
     WebDriverWait(driver, config['condWait']).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, config['pubBtn']))
     )
+    html = txt2html(body[:500])
     driver.execute_script('''
         document.querySelector(arguments[0]).innerHTML = arguments[1]
     ''', config['contText'], html)
@@ -202,18 +207,17 @@ def xhs_post(driver: Chrome, un, pw, title, body, retry=20):
         except:
             pass
         
-        '''
+
         try:
             WebDriverWait(driver, config['condWait']).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, config['noticeBox']))
+                EC.presence_of_element_located((By.CSS_SELECTOR, config['notice']))
             )
-            time.sleep(1)
             el_notice = driver.find_element(By.CSS_SELECTOR, config['noticeBox'])
             notice = el_notice.text
             print(notice)
         except Exception as ex:
             print(ex)
-        '''
+
         
         if i == retry - 1:
             raise Exception('发布失败')
@@ -258,7 +262,7 @@ def main():
             return 
         title = m.group(1)
         pos = m.span()[1]
-        body = txt[pos:][:1000]
+        body = txt[pos:]
         xhs_post_retry(args, title, body)
         os.remove(f)
 
