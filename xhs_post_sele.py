@@ -123,11 +123,11 @@ def xhs_post(driver: Chrome, un, pw, title, body, retry=20):
     print('打开编辑器')
     driver.get('https://creator.xiaohongshu.com/publish/publish?source=official&from=menu&target=article')
     print('等待编辑器加载')
-    driver.implicitly_wait(config['impWait'])
-    print('编辑器加载完成')
-    if 'login' in driver.current_url:
-        raise ValueError('登录失败，未知错误')
+    WebDriverWait(driver, config['condWait']).until(
+        lambda d: 'publish' in d.current_url
+    )
     print('driver.current_url', driver.current_url)
+    print('编辑器加载完成')
     
     
     print('填写标题')
