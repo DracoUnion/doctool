@@ -31,7 +31,7 @@ config = {
     'noticeBox': '.Notification',
     'alertBtn': '.Modal-content button',
     'impWait': 5,
-    'condWait': 60,
+    'condWait': 15,
     'cookie_fname': 'zhihu_cookie.json',
 }
 
@@ -76,8 +76,8 @@ def zhihu_post_retry(args, title, fname):
             break
         except Exception as ex:
             print(f'CSDN Post Retry #{i}: {ex}')
-            if i == args.retry - 1:
-                raise ex
+            # if i == args.retry - 1:
+            #     raise ex
                 
     
 
@@ -213,8 +213,8 @@ def zhihu_post(driver: Chrome, un, pw, title, fname, retry=20):
         except Exception as ex:
             print(ex)
         
-        if i == retry - 1:
-            raise Exception('发布失败')
+        # if i == retry - 1:
+        #     raise Exception('发布失败')
         time.sleep(1)
 
 

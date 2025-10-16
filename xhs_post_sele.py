@@ -32,7 +32,7 @@ config = {
     'pubBtn': '.publishBtn',
     'notice': '.d-toast-notice',
     'impWait': 5,
-    'condWait': 60,
+    'condWait': 15,
     'cookie_fname': 'xhs_cooklie.json',
 }
 
