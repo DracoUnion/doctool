@@ -36,19 +36,21 @@ config = {
     'cateCloseBtn': '.tag__options-content button[title=关闭]',
     'pubBtn': '.modal__button-bar button:last-of-type',
     'impWait': 5,
-    'condWait': 60,
+    'condWait': 15,
     'cookie_fname': 'csdn_cookie.json',
 }
 
 def create_driver(headless=False):
     options = Options()
     options.binary_location = r'D:\Program Files\chrome-for-testing\chrome.exe'
+    custom_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     if headless:
         options.add_argument('--headless')
     options.add_argument('--disable-gpu')
     options.add_argument('--log-level=3')
     options.add_argument(f'--user-agent={UA}')
     options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument(f'--user-agent={custom_user_agent}')
     driver = webdriver.Chrome(options=options)
     driver.set_script_timeout(1000)
     # StealthJS
