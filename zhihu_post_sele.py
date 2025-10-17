@@ -105,7 +105,7 @@ def zhihu_post(driver: Chrome, un, pw, title, fname, retry=20):
         print('登录')
         driver.find_element(By.CSS_SELECTOR, config['loginBtn']).click()
         print('等待登录后跳转')
-        WebDriverWait(driver, config['condWait']).until(
+        WebDriverWait(driver, 60).until(
             lambda d: not d.current_url.startswith('https://www.zhihu.com/signin')
         )
         print('保存 COOKIE')
