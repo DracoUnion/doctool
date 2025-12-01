@@ -119,9 +119,16 @@ def csdn_post(driver: Chrome, un, pw, title, body, cate='默认分类', tags=[],
     print('编辑器加载完成')
     print('driver.current_url', driver.current_url)
     print('填写标题内容')
+    '''
     el_title = driver.find_element(By.CSS_SELECTOR, config['titleText'])
     el_title.clear()
     el_title.send_keys(title[:100])
+    '''
+    driver.execute_script('''
+        var el = document.querySelector(arguments[0]) 
+        el.value = arguments[1]
+        el.dispatchEvent(new Event('input', {bubbles: true}))
+    ''', config['titleText'], title[:100])
     # driver.find_element(By.CSS_SELECTOR, config['bodyText']).send_keys(body)
     driver.execute_script(
         'document.querySelector(arguments[0]).textContent = arguments[1]',
