@@ -27,6 +27,9 @@ def main():
             },
             headers=dft_hdrs
         ).json()
-        print(j)
+        if 'message' in j:
+            print(f'{name} 邀请失败：{j["message"]}')
+        else:
+            print(f'{name} 邀请成功！')
 
 if __name__ == '__main__': main()
