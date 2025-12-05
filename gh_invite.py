@@ -1,50 +1,32 @@
 from pyquery import PyQuery as pq
 import requests
+from BookerDownloadTool.util import request_retry
+import os
 
-cookie = open('gh_cookie.txt', encoding='utf8').read()
 dft_hdrs = {
-    'Cookie': cookie
+    'Accept': 'application/vnd.github+json',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
+    'Authorization': 'Bearer ' + os.environ['GHP_TOKEN'],
+    'X-GitHub-Api-Version': '2022-11-28',
 }
-
-def get_tokrn(html):
-    return pq(html).find('input[name="invitee_id"]').attr('value')
-
-def get_iid(html):
-    return pq(html).find('input[name="authenticity_token"]').attr('value')
 
 def main():
     li = open('github_top50_fans.txt', encoding='utf8').read().split('\n')
     li = [n for n in li if n]
     for name in li:
         print(name)
-        html = requests.get('https://github.com/orgs/OpenDocCN/people', headers=dft_hdrs).text
-        tk = get_tokrn(html)
-        r = requests.post('https://github.com/orgs/OpenDocCN/invitations/member_adder_add',
-            data={
-                'authenticity_token': tk,
-                'identifier': name,
+        j = request_retry('GET', f'https://api.github.com/users/{name}', headers=dft_hdrs).json()
+        if 'message' in j:
+            print(f'{name} 邀请失败：{j["message"]}')
+            continue
+        uid = j['id']
+        print(uid)
+        j = request_retry('POST', 'https://api.github.com/orgs/opendoccn/invitations',
+            json={
+                'invitee_id': uid,
             },
             headers=dft_hdrs
-        )
-        if r.status_code != 302:
-            print(f"{name} 未找到：HTTP {r.status_code}")
-            continue
-
-        html = requests.get(f'https://github.com/orgs/OpenDocCN/invitations/{name}/edit', headers=dft_hdrs).text
-        tk = get_tokrn(html)
-        iid = get_iid(html)
-        r = requests.post(
-            'https://github.com/orgs/OpenDocCN/invitations',
-            data={
-                'authenticity_token': tk,
-                'role': 'direct_member',
-                'invitee_id': iid,
-            },
-            headers=dft_hdrs,
-        )
-        if r.status_code != 302:
-            print(f'{name} 邀请失败：HTTP {r.status_code}')
-        else:
-            print(f'{name} 邀请成功！')
+        ).json()
+        print(j)
 
 if __name__ == '__main__': main()
