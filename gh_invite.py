@@ -15,7 +15,12 @@ def main():
     li = [n for n in li if n]
     for name in li:
         print(name)
-        j = request_retry('GET', f'https://api.github.com/users/{name}', headers=dft_hdrs).json()
+        j = request_retry(
+            'GET', 
+            f'https://api.github.com/users/{name}', 
+            headers=dft_hdrs,
+            retry=10000,
+        ).json()
         if 'message' in j:
             print(f'{name} 邀请失败：{j["message"]}')
             continue
@@ -25,7 +30,8 @@ def main():
             json={
                 'invitee_id': uid,
             },
-            headers=dft_hdrs
+            headers=dft_hdrs,
+            retry=10000,
         ).json()
         if 'message' in j:
             print(f'{name} 邀请失败：{j["message"]}')
