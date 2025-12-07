@@ -233,6 +233,7 @@ def main():
         if not title:
             print(f'{f} MD 文件无标题')
             return
+        if len(title) < 5: title *= 5
         body = md[pos[1]:]
         csdn_post_retry(args, title, body)
         os.remove(f)
