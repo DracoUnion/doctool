@@ -190,10 +190,8 @@ def fetch_dmzj(args):
     fname, st, ed = args.fname, args.start, args.end
     f = open(fname, 'a')
     
-    stop = False
     i = 1
-    while True:
-        if stop: break
+    for i in range(st, ed):
         print(f'page: {i}')
         url = f'https://yymanhua.com/manga-list-0-0-2-p{i}/'
         res = request_retry('GET', url, headers=default_hdrs).text
@@ -202,22 +200,10 @@ def fetch_dmzj(args):
         el_links = rt('h2.title>a')
         ids = [pq(el).attr('href').replace('/', '') for el in el_links]
         if not ids: break
-        '''
-        for bk in j['result']:
-            id = bk['comic_url'][1:-1]
-            dt = bk['last_update_date'].replace('-', '')
-            if ed and dt > ed: 
-                continue
-            if st and dt < st: 
-                stop = True
-                break
-            print(id, dt)
-            f.write(id + '\n')
-        '''
         for id in ids:
             print(id)
             f.write(id + '\n')
-        i += 1
+            f.flush()
         
     f.close()
         
@@ -235,7 +221,7 @@ def main():
 
     fetch_parser = subparsers.add_parser("fetch")
     fetch_parser.add_argument("fname")
-    fetch_parser.add_argument("-s", '--start', type=int, default=0)
+    fetch_parser.add_argument("-s", '--start', type=int, default=1)
     fetch_parser.add_argument("-e", '--end', type=int, default=1_000_000)
     fetch_parser.set_defaults(func=fetch_dmzj)
 
