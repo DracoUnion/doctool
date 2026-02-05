@@ -4,6 +4,7 @@ from os import path
 import time
 import os 
 import json
+import re
 from selenium.webdriver import Chrome
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -24,6 +25,8 @@ config = {
     'titleText': 'textarea.Input',
     'contText': '.DraftEditor-root',
     'colRadio': '#PublishPanel-columnLabel-1',
+    'colCombo': '#Popover7-toggle',
+    'colItem': '.Select-list>Select-option:nth-of-type({i})',
     'giftRadio': '#PublishPanel-RewardSetting-0',
     'giftBtn': '.RewardForm-rewardSubmit',
     'pubBtn': '.JmYzaky7MEPMFcJDLNMG',
@@ -65,13 +68,13 @@ def create_driver(headless=False):
     # })
     return driver
 
-def zhihu_post_retry(args, title, fname):
+def zhihu_post_retry(args, title, fname, col_idx):
     for i in range(args.retry):
         try:
             driver = create_driver(args.headless)
             zhihu_post(
                 driver, args.un, args.pw, 
-                title, fname, 
+                title, fname, col_idx,
                 args.retry,
             )
             driver.close()
@@ -83,7 +86,7 @@ def zhihu_post_retry(args, title, fname):
                 
     
 
-def zhihu_post(driver: Chrome, un, pw, title, fname, retry=20):
+def zhihu_post(driver: Chrome, un, pw, title, fname, col_idx, retry=20):
     # 登录
     if path.isfile(config['cookie_fname']):
         print('导入Cookie')
@@ -125,9 +128,12 @@ def zhihu_post(driver: Chrome, un, pw, title, fname, retry=20):
     
     
     print('填写标题')
-    el_title = driver.find_element(By.CSS_SELECTOR, config['titleText'])
-    el_title.clear()
-    el_title.send_keys(title[:100])
+    driver.find_element(By.CSS_SELECTOR, config['titleText']).send_keys(title[:100])
+    # driver.execute_script('''
+    #     var el = document.querySelector(arguments[0]) 
+    #     el.value = arguments[1]
+    #     el.dispatchEvent(new Event('input', {bubbles: true}))
+    # ''', config['titleText'], title[:100])
     # driver.find_element(By.CSS_SELECTOR, config['bodyText']).send_keys(body)
     
     print('选择专栏')
@@ -137,9 +143,23 @@ def zhihu_post(driver: Chrome, un, pw, title, fname, retry=20):
     )
     # el_col = driver.find_element(By.CSS_SELECTOR, config['colRadio'])
     # el_col.click()
-    driver.execute_script('''
-        document.querySelector(arguments[0]).click()
-    ''', config['colRadio'])
+    if col_idx != 0:
+        driver.execute_script('''
+            document.querySelector(arguments[0]).click()
+        ''', config['colRadio'])
+        WebDriverWait(driver, config['condWait']).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, config['colCombo']))
+        )
+        driver.execute_script('''
+            document.querySelector(arguments[0]).click()
+        ''', config['colCombo'])
+        el =  config['colItem'].replace('{i}', str(col_idx))
+        WebDriverWait(driver, config['condWait']).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, el))
+        )
+        driver.execute_script('''
+            document.querySelector(arguments[0]).click()
+        ''', el)
     # el_gift = driver.find_element(By.CSS_SELECTOR, config['giftRadio'])
     # el_gift.click()
     
@@ -154,8 +174,8 @@ def zhihu_post(driver: Chrome, un, pw, title, fname, retry=20):
     
     print('填写内容')
 
-    el_alert = driver.find_element(By.CSS_SELECTOR, config['alertBtn'])
-    if el_alert: el_alert.click()
+    # el_alert = driver.find_element(By.CSS_SELECTOR, config['alertBtn'])
+    # if el_alert: el_alert.click()
     
     # html = md2html_pandoc(body)
     # driver.execute_script('''
@@ -234,6 +254,7 @@ def main():
     parser.add_argument("-t", "--tags", default='默认标签',  help="tags")
     parser.add_argument("-r", "--retry", type=int, default=20,  help="retry")
     parser.add_argument("-H","--headless", action='store_true', help="hdls")
+    parser.add_argument("-i","--col-idx", type=int, default=0, help="col idx")
     args = parser.parse_args()
 
     if path.isfile(args.fname):
@@ -257,8 +278,9 @@ def main():
             print(f'{f} MD 文件无标题')
             return
         # body = md[pos[1]:]
+        title = re.sub(r'[^\u0000-\uFFFF]', '', title)
         fname = path.abspath(f)
-        zhihu_post_retry(args, title, fname)
+        zhihu_post_retry(args, title, fname, args.col_idx)
         os.remove(f)
 
 
