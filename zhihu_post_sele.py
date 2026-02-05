@@ -26,7 +26,7 @@ config = {
     'contText': '.DraftEditor-root',
     'colRadio': '#PublishPanel-columnLabel-1',
     'colCombo': '#Popover7-toggle',
-    'colItem': '.Select-list>Select-option:nth-of-type({i})',
+    'colItem': '.Select-list>.Select-option:nth-of-type({i})',
     'giftRadio': '#PublishPanel-RewardSetting-0',
     'giftBtn': '.RewardForm-rewardSubmit',
     'pubBtn': '.JmYzaky7MEPMFcJDLNMG',
@@ -137,6 +137,7 @@ def zhihu_post(driver: Chrome, un, pw, title, fname, col_idx, retry=20):
     # driver.find_element(By.CSS_SELECTOR, config['bodyText']).send_keys(body)
     
     print('选择专栏')
+    
     driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
     WebDriverWait(driver, config['condWait']).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, config['colRadio']))
@@ -173,10 +174,12 @@ def zhihu_post(driver: Chrome, un, pw, title, fname, col_idx, retry=20):
     # el_gift.click()
     
     print('填写内容')
-
+    
     # el_alert = driver.find_element(By.CSS_SELECTOR, config['alertBtn'])
     # if el_alert: el_alert.click()
-    
+    driver.execute_script('''
+        document.querySelector(arguments[0])?.click()
+    ''', config['alertBtn'])
     # html = md2html_pandoc(body)
     # driver.execute_script('''
     #     document.querySelector(arguments[0]).innerHTML = arguments[1]
