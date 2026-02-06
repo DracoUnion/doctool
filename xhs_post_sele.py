@@ -30,6 +30,7 @@ config = {
     'cusBtnDis': 'div.footer > .custom-button[disabled]',
     'tmplCard': '.template-card',
     'pubBtn': '.publishBtn',
+    'pubBtn2': '.publish-page-publish-btn > button:last-of-type',
     'notice': '.d-toast-notice',
     'impWait': 5,
     'condWait': 15,
@@ -154,7 +155,7 @@ def xhs_post(driver: Chrome, un, pw, title, body, retry=20):
     
     print('填写内容')
     
-    html = txt2html(body)
+    html = md2html_pandoc(body)
     driver.execute_script('''
         document.querySelector(arguments[0]).innerHTML = arguments[1]
     ''', config['contText'], html)
@@ -184,7 +185,7 @@ def xhs_post(driver: Chrome, un, pw, title, body, retry=20):
     
     print('填写摘要')
     WebDriverWait(driver, config['condWait']).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, config['pubBtn']))
+        EC.presence_of_element_located((By.CSS_SELECTOR, config['pubBtn2']))
     )
     html = txt2html(body[:500])
     driver.execute_script('''
@@ -196,7 +197,7 @@ def xhs_post(driver: Chrome, un, pw, title, body, retry=20):
    
     for i in range(retry):
         print(f'发布：{i}')
-        driver.find_element(By.CSS_SELECTOR, config['pubBtn']).click()
+        driver.find_element(By.CSS_SELECTOR, config['pubBtn2']).click()
         print('等待消息提示')
         try:
             WebDriverWait(driver, config['condWait']).until(
@@ -249,7 +250,7 @@ def main():
             path.join(args.fname, f)
             for f in os.listdir(args.fname)
         ]
-    fnames = [f for f in fnames if f.endswith('_xhs.txt')]
+    fnames = [f for f in fnames if f.endswith('.md')]
     if not fnames:
         print('请提供小红书 TXT 文件或目录')
         return
