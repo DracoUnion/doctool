@@ -279,7 +279,7 @@ def main():
         title, pos = get_md_title(md)
         if not title:
             print(f'{f} MD 文件无标题')
-            return
+            continue
         # body = md[pos[1]:]
         title = re.sub(r'[^\u0000-\uFFFF]', '', title)
         fname = path.abspath(f)
