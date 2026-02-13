@@ -1,3 +1,4 @@
+import re
 import traceback
 import argparse
 from os import path
@@ -229,6 +230,7 @@ def main():
     for f in fnames:
         print(f)
         md = open(f, encoding='utf8').read()
+        md = re.sub(r'!\[[^\]]*\]\(([^\)]+)\)', r'<\1>', md)
         title, pos = get_md_title(md)
         if not title:
             print(f'{f} MD 文件无标题')
