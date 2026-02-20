@@ -277,6 +277,7 @@ def main():
         print(f)
         md = open(f, encoding='utf8').read()
         md = re.sub(r'!\[[^\]]*\]\(([^\)]+)\)', r'<\1>', md)
+        open(f, 'w', encoding='utf8').write(md)
         title, pos = get_md_title(md)
         if not title:
             print(f'{f} MD 文件无标题')
