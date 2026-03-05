@@ -137,14 +137,13 @@ def zhihu_post(driver: Chrome, un, pw, title, fname, col_idx, retry=20):
     # driver.find_element(By.CSS_SELECTOR, config['bodyText']).send_keys(body)
     
     print('选择专栏')
-    
-    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-    WebDriverWait(driver, config['condWait']).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, config['colRadio']))
-    )
     # el_col = driver.find_element(By.CSS_SELECTOR, config['colRadio'])
     # el_col.click()
     if col_idx != 0:
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        WebDriverWait(driver, config['condWait']).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, config['colRadio']))
+        )
         driver.execute_script('''
             document.querySelector(arguments[0]).click()
         ''', config['colRadio'])
