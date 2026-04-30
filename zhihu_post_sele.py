@@ -25,8 +25,10 @@ config = {
     'titleText': 'textarea.Input',
     'contText': '.DraftEditor-root',
     'colRadio': '#PublishPanel-columnLabel-1',
-    'colCombo': '#Popover7-toggle',
+    'colCombo': '.css-dlnfsc > button',
+    'declCombo': 'div.css-be2u3:nth-child(4) > div:nth-child(2) > div:nth-child(1)  > button',
     'colItem': '.Select-list>.Select-option:nth-of-type({i})',
+    'declItem': '.Select-list>.Select-option:nth-of-type(5)',
     'giftRadio': '#PublishPanel-RewardSetting-0',
     'giftBtn': '.RewardForm-rewardSubmit',
     'pubBtn': '.JmYzaky7MEPMFcJDLNMG',
@@ -172,6 +174,20 @@ def zhihu_post(driver: Chrome, un, pw, title, fname, col_idx, retry=20):
     # el_gift = driver.find_element(By.CSS_SELECTOR, config['giftBtn'])
     # el_gift.click()
     
+    print('声明 AI 创作')
+    WebDriverWait(driver, config['condWait']).until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, config['declCombo']))
+    )
+    driver.execute_script('''
+        document.querySelector(arguments[0]).click()
+    ''', config['declCombo'])
+    WebDriverWait(driver, config['condWait']).until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, config['declItem']))
+    )
+    driver.execute_script('''
+        document.querySelector(arguments[0]).click()
+    ''', config['declItem'])
+
     print('填写内容')
     
     # el_alert = driver.find_element(By.CSS_SELECTOR, config['alertBtn'])
