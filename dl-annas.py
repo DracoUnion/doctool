@@ -28,6 +28,9 @@ def download(args):
     bt_fname = f'{hash_}.torrent'
     ext = rt.find('.text-gray-800').text().split(' · ')[1].lower()
     fname = title + '.' + ext
+    if os.path.isfile(fname):
+        print(f'{fname} 已存在')
+        return
     print(f'fname: {fname}')
     print(f'bt_fname: {bt_fname}')
     print(f'bt_link: {bt_link}')
@@ -50,6 +53,8 @@ def download(args):
     ]
     subp.run(cmd, shell=True)
     os.rename(hash_, fname)
+    aria2_fname = [f for f in os.listdir() if f.endswith('.aria2')]
+    for f in aria2_fname: os.remove(f)
 
 def main():
     parser = argparse.ArgumentParser(prog="dl-annas", formatter_class=argparse.RawDescriptionHelpFormatter)
