@@ -108,7 +108,7 @@ def download(args):
         f'--select-file={bt_idx+1}',
         f'--index-out={bt_idx+1}={hash_}',
     ]
-    subp.run(cmd, shell=True)
+    subp.run(cmd, shell=True).check_returncode()
     os.rename(hash_, fname)
     bt_name = bencode.bdecode(bt_data)['info']['name']
     shutil.rmtree(bt_name)
