@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+import shutil
 import os
 import argparse
 import re
@@ -109,6 +110,9 @@ def download(args):
     ]
     subp.run(cmd, shell=True)
     os.rename(hash_, fname)
+    bt_name = bencode.bdecode(bt_data)['info']['name']
+    shutil.rmtree(bt_name)
+    os.remove(bt_name + '.aria2')
     # aria2_fname = [f for f in os.listdir() if f.endswith('.aria2')]
     # for f in aria2_fname: os.remove(f)
 
