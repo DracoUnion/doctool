@@ -1,10 +1,12 @@
 import os
 import argparse
 import re
+import json
 from BookerDownloadTool.util import request_retry, fname_escape
 import bencode
 import subprocess as subp
 from pyquery import PyQuery as pq
+from urllib.parse import quote_plus
 
 HOST = 'annas-archive.gl'
 
@@ -14,6 +16,36 @@ def get_bt_idx(bt_data, fname):
         if fname in f['path']:
             return idx
     return -1
+
+def fetch(args):
+    # https://annas-archive.gl/search
+    # ?index=&page=1&sort=newest&content=book_nonfiction
+    # &content=book_unknown&ext=pdf&ext=epub&lang=en&display=&q=tarot
+    f = open(args.ofname, 'a', encoding='utf8')
+    qry_ext = ''.join(f'&ext={e}' for e in args.ext)
+    qry_cont = ''.join(f'&content={c}' for c in args.content)
+    qry_lang = ''.join(f'&lang={l}' for l in args.lang)
+    for i in range(args.start, args.end + 1):
+        url = (
+            f'https://{HOST}/search' + 
+            f'?page={i}&sort={args.sort}&q={quote_plus(args.query)}' + 
+            f'{qry_ext}{qry_cont}{qry_lang}'
+        )
+        print(url)
+        html = request_retry('GET', url).text
+        rt = pq(html)
+        el_links = rt.find('a.text-lg[href^="/md5/"]')
+        if not el_links: break
+        for el in el_links:
+            el = pq(el)
+            hash_ = el.attr('href').replace('/md5/', '')
+            title = el.text().strip()
+            print(f'title: {title}, hash: {hash_}')
+            f.write(json.dumps({'title': title, 'hash': hash_}) + '\n')
+            f.flush()
+    f.close()
+    
+
 
 def download(args):
     hash_ = args.hash
@@ -62,9 +94,21 @@ def main():
     parser.set_defaults(func=lambda x: parser.print_help())
     subparsers = parser.add_subparsers()
     
-    trans_parser = subparsers.add_parser("download", help="download file")
-    trans_parser.add_argument("hash", help="file hash")
-    trans_parser.set_defaults(func=download)
+    dl_parser = subparsers.add_parser("download", help="download file")
+    dl_parser.add_argument("hash", help="file hash")
+    dl_parser.set_defaults(func=download)
+
+    fetch_parser = subparsers.add_parser("fetch", help="download file")
+    fetch_parser.add_argument("-s", "--start", type=int, default=1, help="start page")
+    fetch_parser.add_argument("query", help="query kw")
+    fetch_parser.add_argument("ofname", help="output file name")
+    fetch_parser.add_argument("-e", "--end", type=int, default=1_000_000, help="end page")
+    fetch_parser.add_argument("-r", "--sort", default='newest', help="sort by")
+    fetch_parser.add_argument("-c", "--content", default=[], nargs='+', help="content")
+    fetch_parser.add_argument("-l", "--lang", default=[], nargs='+', help="lang")
+    fetch_parser.add_argument("-x", "--ext", default=[], nargs='+', help="ext name")
+    fetch_parser.set_defaults(func=fetch)
+
 
     args = parser.parse_args()
     args.func(args)
