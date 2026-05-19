@@ -1,9 +1,11 @@
+from concurrent.futures import ThreadPoolExecutor
 import os
 import argparse
 import re
 import json
 from BookerDownloadTool.util import request_retry, fname_escape
 import bencode
+import copy
 import subprocess as subp
 from pyquery import PyQuery as pq
 from urllib.parse import quote_plus
@@ -16,6 +18,28 @@ def get_bt_idx(bt_data, fname):
         if fname in f['path']:
             return idx
     return -1
+
+def batch(args):
+    if not args.flist.endswith('.jsonl'):
+        print('请提供 JSONL 文件')
+        return
+    
+    pool = ThreadPoolExecutor(args.threads)
+    hdls = []
+    lines = open(args.flist, encoding='utf8').read().split('\n')
+    lines = [l for l in lines if l.strip()]
+    for l in lines:
+        j = json.loads(l)
+        args = copy.deepcopy(args)
+        args.hash = j['hash']
+        h = pool.submit(download, args)
+        hdls.append(h)
+        if len(hdls) > args.threads:
+            for h in hdls: h.result()
+            hdls = []
+
+    for h in hdls: 
+        h.result()
 
 def fetch(args):
     # https://annas-archive.gl/search
@@ -85,8 +109,8 @@ def download(args):
     ]
     subp.run(cmd, shell=True)
     os.rename(hash_, fname)
-    aria2_fname = [f for f in os.listdir() if f.endswith('.aria2')]
-    for f in aria2_fname: os.remove(f)
+    # aria2_fname = [f for f in os.listdir() if f.endswith('.aria2')]
+    # for f in aria2_fname: os.remove(f)
 
 def main():
     parser = argparse.ArgumentParser(prog="dl-annas", formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -97,6 +121,12 @@ def main():
     dl_parser = subparsers.add_parser("download", help="download file")
     dl_parser.add_argument("hash", help="file hash")
     dl_parser.set_defaults(func=download)
+
+    batch_parser = subparsers.add_parser("batch", help="download file")
+    batch_parser.add_argument("flist", help="JSONL list file")
+    batch_parser.add_argument("-t", "--threads", type=int, default=8, help="threads num")
+    batch_parser.set_defaults(func=batch)
+
 
     fetch_parser = subparsers.add_parser("fetch", help="download file")
     fetch_parser.add_argument("-s", "--start", type=int, default=1, help="start page")
