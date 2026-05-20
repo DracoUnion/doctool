@@ -1,3 +1,4 @@
+import tqdm
 from concurrent.futures import ThreadPoolExecutor
 import shutil
 import os
@@ -12,6 +13,10 @@ from pyquery import PyQuery as pq
 from urllib.parse import quote_plus
 
 HOST = 'annas-archive.gl'
+
+dft_hdr = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:150.0) Gecko/20100101 Firefox/150.0',
+}
 
 def get_bt_idx(bt_data, fname):
     bt = bencode.bdecode(bt_data)
@@ -33,7 +38,8 @@ def batch(args):
         j = json.loads(l)
         args = copy.deepcopy(args)
         args.hash = j['hash']
-        h = pool.submit(download, args)
+        dl_func = download if args.site == 'annas' else download_libgenli
+        h = pool.submit(dl_func, args)
         hdls.append(h)
         if len(hdls) > args.threads:
             for h in hdls: h.result()
@@ -70,7 +76,37 @@ def fetch(args):
             f.flush()
     f.close()
     
-
+def download_libgenli(args):
+    url = f'https://libgen.li/ads.php?md5={args.hash}'
+    html = request_retry('GET', url, headers=dft_hdr).text
+    # print(html)
+    rt = pq(html)
+    msg = rt.find('.alert-danger').text()
+    if msg:
+        print(f'{args.hash} 下载失败：{msg}')
+        return
+    info = rt.find('#bibtext').text()
+    title = re.search(r'title\x20=\x20+\{(.+?)\}', info).group(1)
+    link = rt.find('a[href^=get]').attr('href')
+    link = f'https://libgen.li/{link}'
+    r = request_retry('GET', link, headers=dft_hdr, stream=True)
+    ext = r.headers['Content-Disposition']
+    ext = re.search(r'filename="(.+?)"', ext).group(1).split('.')[-1]
+    fsize = int(r.headers['Content-Length'])
+    fname = fname_escape(f'{title}.{ext}')
+    if os.path.isfile(fname):
+        print(f'{fname} 已存在')
+        return
+    print(fname)
+    with open(fname, 'wb') as f:
+        for data in tqdm.tqdm(
+            r.iter_content(8192),
+            total=fsize,
+            unit='B', 
+            unit_scale=True,
+        ):
+            f.write(data)
+            f.flush()
 
 def download(args):
     hash_ = args.hash
@@ -107,6 +143,10 @@ def download(args):
         '--allow-overwrite=true',
         f'--select-file={bt_idx+1}',
         f'--index-out={bt_idx+1}={hash_}',
+        '--bt-tracker-timeout=30', 
+        '--bt-tracker-connect-timeout=15',
+        '--max-tries=5',
+        '--retry-wait=5',
     ]
     subp.run(cmd, shell=True).check_returncode()
     os.rename(hash_, fname)
@@ -126,9 +166,14 @@ def main():
     dl_parser.add_argument("hash", help="file hash")
     dl_parser.set_defaults(func=download)
 
+    dl_li_parser = subparsers.add_parser("dl-libgenli", help="download file")
+    dl_li_parser.add_argument("hash", help="file hash")
+    dl_li_parser.set_defaults(func=download_libgenli)
+
     batch_parser = subparsers.add_parser("batch", help="download file")
     batch_parser.add_argument("flist", help="JSONL list file")
     batch_parser.add_argument("-t", "--threads", type=int, default=8, help="threads num")
+    batch_parser.add_argument("-s", "--site", default='annas', choices=['annas', 'libgenli'],  help="site")
     batch_parser.set_defaults(func=batch)
 
 
