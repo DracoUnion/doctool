@@ -87,7 +87,11 @@ def download_lgli(args):
         print(f'{args.hash} 下载失败：{msg}')
         return
     info = rt.find('#bibtext').text()
-    title = re.search(r'title\x20=\x20+\{(.+?)\}', info).group(1)
+    m = re.search(r'title\x20=\x20+\{(.+?)\}', info)
+    if not m:
+        print('标题获取失败')
+        return
+    title = m.group(1)
     link = rt.find('a[href^=get]').attr('href')
     link = f'https://libgen.li/{link}'
     r = request_retry('GET', link, headers=dft_hdr, stream=True)
