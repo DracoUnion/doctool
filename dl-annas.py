@@ -38,7 +38,7 @@ def batch(args):
         j = json.loads(l)
         args = copy.deepcopy(args)
         args.hash = j['hash']
-        dl_func = download if args.site == 'annas' else download_libgenli
+        dl_func = download if args.site == 'annas' else download_lgli
         h = pool.submit(dl_func, args)
         hdls.append(h)
         if len(hdls) > args.threads:
@@ -76,8 +76,9 @@ def fetch(args):
             f.flush()
     f.close()
     
-def download_libgenli(args):
+def download_lgli(args):
     url = f'https://libgen.li/ads.php?md5={args.hash}'
+    print(url)
     html = request_retry('GET', url, headers=dft_hdr).text
     # print(html)
     rt = pq(html)
@@ -94,19 +95,22 @@ def download_libgenli(args):
     ext = re.search(r'filename="(.+?)"', ext).group(1).split('.')[-1]
     fsize = int(r.headers['Content-Length'])
     fname = fname_escape(f'{title}.{ext}')
+    fname_bak = fname_escape(f'{fname}.bak')
     if os.path.isfile(fname):
         print(f'{fname} 已存在')
         return
     print(fname)
-    with open(fname, 'wb') as f:
+    chunk_size = 8192
+    num_chunks = (fsize + chunk_size - 1) // chunk_size 
+    with open(fname_bak, 'wb') as f:
         for data in tqdm.tqdm(
-            r.iter_content(8192),
-            total=fsize,
-            unit='B', 
-            unit_scale=True,
+            r.iter_content(chunk_size),
+            total=num_chunks,
+            unit='chunk', 
         ):
             f.write(data)
             f.flush()
+    os.rename(fname_bak, fname)
 
 def download(args):
     hash_ = args.hash
@@ -166,14 +170,14 @@ def main():
     dl_parser.add_argument("hash", help="file hash")
     dl_parser.set_defaults(func=download)
 
-    dl_li_parser = subparsers.add_parser("dl-libgenli", help="download file")
+    dl_li_parser = subparsers.add_parser("dl-lgli", help="download file")
     dl_li_parser.add_argument("hash", help="file hash")
-    dl_li_parser.set_defaults(func=download_libgenli)
+    dl_li_parser.set_defaults(func=download_lgli)
 
     batch_parser = subparsers.add_parser("batch", help="download file")
     batch_parser.add_argument("flist", help="JSONL list file")
     batch_parser.add_argument("-t", "--threads", type=int, default=8, help="threads num")
-    batch_parser.add_argument("-s", "--site", default='annas', choices=['annas', 'libgenli'],  help="site")
+    batch_parser.add_argument("-s", "--site", default='annas', choices=['annas', 'lgli'],  help="site")
     batch_parser.set_defaults(func=batch)
 
 
