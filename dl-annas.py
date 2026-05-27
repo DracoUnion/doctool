@@ -1,3 +1,4 @@
+import traceback
 import tqdm
 from concurrent.futures import ThreadPoolExecutor
 import shutil
@@ -25,6 +26,14 @@ def get_bt_idx(bt_data, fname):
             return idx
     return -1
 
+def tr_download_safe(args):
+    try:
+        dl_func = download if args.site == 'annas' else download_lgli
+        dl_func(args)
+    except:
+        traceback.print_exc()
+
+
 def batch(args):
     if not args.flist.endswith('.jsonl'):
         print('请提供 JSONL 文件')
@@ -38,8 +47,7 @@ def batch(args):
         j = json.loads(l)
         args = copy.deepcopy(args)
         args.hash = j['hash']
-        dl_func = download if args.site == 'annas' else download_lgli
-        h = pool.submit(dl_func, args)
+        h = pool.submit(tr_download_safe, args)
         hdls.append(h)
         if len(hdls) > args.threads:
             for h in hdls: h.result()
