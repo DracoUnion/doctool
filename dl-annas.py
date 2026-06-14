@@ -105,7 +105,7 @@ def plrt_get_html(url: str, el_chk: str = None) -> str:
     with sync_playwright() as p:
         # 1. 启动浏览器（推荐使用有头模式，无头模式可能被检测）
         browser = p.chromium.launch(
-            headless=False,
+            headless=True,
             args=[
                 # 禁用AutomationControlled自动化标记（Chrome94+核心参数）
                 "--disable-blink-features=AutomationControlled", 
@@ -250,19 +250,24 @@ def download_lgli(args):
 
 def download_slow(args):
     hash_ = args.hash
-    url = f'https://{HOST}/slow_download/{hash_}/0/4'
-    html = plrt_get_html(url, '.bg-gray-200')
+    url = f'https://{HOST}/md5/{hash_}'
+    html = request_retry('GET', url).text
     rt = pq(html)
-    link = rt.find('.bg-gray-200').text().strip()
-    title = fname_escape(rt.find(r'.line-clamp-\[3\]').text().strip())
-    ext = ext = rt.find('.text-gray-800').text().split(' · ')[1].lower()
+    title = fname_escape(rt.find('div.font-semibold:nth-child(4)').text().strip().replace(' 🔍', ''))
+    ext = rt.find('.text-gray-800').text().split(' · ')[1].lower()
     fname = f'{title}.{ext}'
     fname_bak = fname_escape(f'{fname}.bak')
     if os.path.isfile(fname):
         print(f'{fname} 已存在')
         return
     print(f'fname: {fname}')
+
+    url = f'https://{HOST}/slow_download/{hash_}/0/4'
+    html = plrt_get_html(url, '.bg-gray-200')
+    rt = pq(html)
+    link = rt.find('.bg-gray-200').text().strip()
     r = request_retry('GET', link, headers=dft_hdr, stream=True)
+    r.raise_for_status()
     fsize = int(r.headers['Content-Length'])
     chunk_size = 8192
     num_chunks = (fsize + chunk_size - 1) // chunk_size 
