@@ -12,12 +12,132 @@ import copy
 import subprocess as subp
 from pyquery import PyQuery as pq
 from urllib.parse import quote_plus
+from playwright.sync_api import sync_playwright
 
 HOST = 'annas-archive.gl'
+
+PATCH_ENV_JS = '''
+const patch = () => {
+  // 1. webdriver标记（最核心）
+  Object.defineProperty(navigator, 'webdriver', {
+    get: () => false,
+  });
+
+  // 2. plugins列表（真实浏览器有2–5个，Headless为0）
+  const mockPlugins = [
+    { name: "Chrome PDF Plugin", filename: "internal-pdf-viewer" },
+    { name: "Chrome PDF Viewer", filename: "mhjfbmdgcfjbbpaeojofohoefgiehjai" }
+  ];
+  Object.defineProperty(navigator, 'plugins', {
+    get: () => mockPlugins,
+  });
+
+  // 3. mimeTypes（必须与plugins数量一致）
+  const mockMimeTypes = [
+    { type: "application/pdf", suffixes: "pdf", description: "" }
+  ];
+  Object.defineProperty(navigator, 'mimeTypes', {
+    get: () => mockMimeTypes,
+  });
+
+  // 4. 外部窗口尺寸（需与实际屏幕匹配，否则触发二次验证）
+  const screenWidth = window.screen.width;
+  const screenHeight = window.screen.height;
+  Object.defineProperty(window, 'outerWidth', {
+    get: () => screenWidth,
+  });
+  Object.defineProperty(window, 'outerHeight', {
+    get: () => screenHeight,
+  });
+
+  // 5. documentMode（IE遗留，但Cloudflare仍检查）
+  Object.defineProperty(document, 'documentMode', {
+    get: () => undefined,
+  });
+
+  // 6. chrome对象（Headless Chrome无此对象）
+  window.chrome = { runtime: {} };
+};
+
+// 确保在所有上下文执行
+if (typeof window !== 'undefined') {
+  patch();
+} else if (typeof self !== 'undefined') {
+  self.patch = patch;
+  self.patch();
+}
+'''
+ 
+MOCK_WASM_JS = '''
+const wasmBytes = new Uint8Array([
+  0x00, 0x61, 0x73, 0x6d, // magic header
+  0x01, 0x00, 0x00, 0x00, // version
+  // ... 省略具体字节，实际需生成合法WASM二进制
+]);
+const wasmModule = new WebAssembly.Module(wasmBytes);
+const wasmInstance = new WebAssembly.Instance(wasmModule);
+
+// 模拟原模块的导出函数
+wasmInstance.exports._calculate_hash = (input_ptr, input_len, output_ptr) => {
+  // 输入是内存地址，需从wasm memory中读取
+  const memory = wasmInstance.exports.memory;
+  const inputArray = new Uint8Array(memory.buffer, input_ptr, input_len);
+  const inputStr = new TextDecoder().decode(inputArray);
+  
+  // 执行JS版SHA256（使用crypto.subtle或第三方库）
+  const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(inputStr));
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  
+  // 写回output_ptr指向的内存
+  const outputArray = new Uint8Array(memory.buffer, output_ptr, 32);
+  outputArray.set(hashArray);
+};
+'''
 
 dft_hdr = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:150.0) Gecko/20100101 Firefox/150.0',
 }
+
+def plrt_get_html(url: str, el_chk: str = None) -> str:
+    """
+    使用 Playwright 启动浏览器，访问页面，等待验证通过后获取 Cookies。
+    """
+    with sync_playwright() as p:
+        # 1. 启动浏览器（推荐使用有头模式，无头模式可能被检测）
+        browser = p.chromium.launch(
+            headless=False,
+            args=[
+                # 禁用AutomationControlled自动化标记（Chrome94+核心参数）
+                "--disable-blink-features=AutomationControlled", 
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-blink-features=AutomationControlled",
+                # 模拟真人最大化打开浏览器
+                "--start-maximized",
+            ],
+        )
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            viewport={"width":1920,"height":1080},
+            locale="zh-CN",
+            timezone_id="Asia/Shanghai"
+        )
+        context.add_init_script(PATCH_ENV_JS)
+        context.add_init_script(MOCK_WASM_JS)
+        page = context.new_page()
+        
+        # 2. 访问目标网站，等待网络空闲，让验证有机会完成
+        page.goto(url)
+        page.wait_for_load_state("networkidle")
+        
+        # 3. 尝试等待关键的 el_chk ，最多等待 20 秒
+        #    这比单纯等待timeout更智能
+        if el_chk:
+            page.wait_for_selector(el_chk, timeout=20000)
+        # 4. 获取HTML并关闭浏览器
+        html = page.content()
+        browser.close()
+        return html
 
 def get_bt_idx(bt_data, fname):
     bt = bencode.bdecode(bt_data)
@@ -28,7 +148,11 @@ def get_bt_idx(bt_data, fname):
 
 def tr_download_safe(args):
     try:
-        dl_func = download if args.site == 'annas' else download_lgli
+        dl_func = (
+            download_bt if args.site == 'bt' else 
+            download_lgli if args.site == 'lgli' else
+            download_slow
+        )
         dl_func(args)
     except:
         traceback.print_exc()
@@ -43,7 +167,7 @@ def batch(args):
     hdls = []
     lines = open(args.flist, encoding='utf8').read().split('\n')
     lines = [l for l in lines if l.strip()]
-    for l in lines:
+    for l in lines[args.start:]:
         j = json.loads(l)
         args = copy.deepcopy(args)
         args.hash = j['hash']
@@ -124,7 +248,38 @@ def download_lgli(args):
             f.flush()
     os.rename(fname_bak, fname)
 
-def download(args):
+def download_slow(args):
+    hash_ = args.hash
+    url = f'https://{HOST}/slow_download/{hash_}/0/4'
+    html = plrt_get_html(url, '.bg-gray-200')
+    rt = pq(html)
+    link = rt.find('.bg-gray-200').text().strip()
+    title = fname_escape(rt.find(r'.line-clamp-\[3\]').text().strip())
+    ext = ext = rt.find('.text-gray-800').text().split(' · ')[1].lower()
+    fname = f'{title}.{ext}'
+    fname_bak = fname_escape(f'{fname}.bak')
+    if os.path.isfile(fname):
+        print(f'{fname} 已存在')
+        return
+    print(f'fname: {fname}')
+    r = request_retry('GET', link, headers=dft_hdr, stream=True)
+    fsize = int(r.headers['Content-Length'])
+    chunk_size = 8192
+    num_chunks = (fsize + chunk_size - 1) // chunk_size 
+    with open(fname_bak, 'wb') as f:
+        for data in tqdm.tqdm(
+            r.iter_content(chunk_size),
+            total=num_chunks,
+            unit='chunk', 
+        ):
+            f.write(data)
+            f.flush()
+    os.rename(fname_bak, fname)
+
+    
+
+
+def download_bt(args):
     hash_ = args.hash
     url = f'https://{HOST}/md5/{hash_}'
     html = request_retry('GET', url).text
@@ -178,9 +333,14 @@ def main():
     parser.set_defaults(func=lambda x: parser.print_help())
     subparsers = parser.add_subparsers()
     
-    dl_parser = subparsers.add_parser("download", help="download file")
+    dl_parser = subparsers.add_parser("dl-bt", help="download file")
     dl_parser.add_argument("hash", help="file hash")
-    dl_parser.set_defaults(func=download)
+    dl_parser.set_defaults(func=download_bt)
+
+    dl_slow_parser = subparsers.add_parser("dl-slow", help="download file")
+    dl_slow_parser.add_argument("hash", help="file hash")
+    dl_slow_parser.set_defaults(func=download_slow)
+
 
     dl_li_parser = subparsers.add_parser("dl-lgli", help="download file")
     dl_li_parser.add_argument("hash", help="file hash")
@@ -189,7 +349,8 @@ def main():
     batch_parser = subparsers.add_parser("batch", help="download file")
     batch_parser.add_argument("flist", help="JSONL list file")
     batch_parser.add_argument("-t", "--threads", type=int, default=8, help="threads num")
-    batch_parser.add_argument("-s", "--site", default='annas', choices=['annas', 'lgli'],  help="site")
+    batch_parser.add_argument("-s", "--site", default='annas', choices=['slow', 'bt', 'lgli'],  help="site")
+    batch_parser.add_argument("-st", "--start", type=int, default=0,  help="start")
     batch_parser.set_defaults(func=batch)
 
 
