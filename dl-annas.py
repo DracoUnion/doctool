@@ -337,6 +337,22 @@ def download_bt(args):
     # aria2_fname = [f for f in os.listdir() if f.endswith('.aria2')]
     # for f in aria2_fname: os.remove(f)
 
+def dedup(args):
+    if not args.flist.endswith('.jsonl'):
+        print('请提供 JSONL 文件')
+        return
+    li = open(args.flist, encoding='utf8').read().split('\n')
+    li = [json.loads(it) for it in li]
+    slug_file_map = {
+        it['slug']:it
+        for it in li
+    }
+    li = list(slug_file_map.values())
+    li = [json.dumps(it) for it in li]
+    li = '\n'.join(li)
+    open(args.flist, 'w', encoding='utf8').write(li)
+    print('done...')
+
 def main():
     parser = argparse.ArgumentParser(prog="dl-annas", formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("-v", "--version", action="version", version=f"PYBP version: 0.0.0.0")
@@ -374,6 +390,10 @@ def main():
     fetch_parser.add_argument("-l", "--lang", default=[], nargs='+', help="lang")
     fetch_parser.add_argument("-x", "--ext", default=[], nargs='+', help="ext name")
     fetch_parser.set_defaults(func=fetch)
+
+    dedup_parser = subparsers.add_parser("dedup", help="dedup file")
+    dedup_parser.add_argument("flist", help="JSONL list file")
+    dedup_parser.set_defaults(func=dedup)
 
 
     args = parser.parse_args()
