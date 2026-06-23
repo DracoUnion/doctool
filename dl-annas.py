@@ -342,6 +342,7 @@ def dedup(args):
         print('请提供 JSONL 文件')
         return
     li = open(args.flist, encoding='utf8').read().split('\n')
+    li = [l for l in li if l.strip()]
     li = [json.loads(it) for it in li]
     slug_file_map = {
         it['slug']:it
