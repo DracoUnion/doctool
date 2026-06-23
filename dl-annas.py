@@ -7,6 +7,7 @@ import argparse
 import re
 import json
 from BookerDownloadTool.util import request_retry, fname_escape
+from BookerGptTool.util import to_kebab
 import bencode
 import copy
 import subprocess as subp
@@ -204,7 +205,11 @@ def fetch(args):
             hash_ = el.attr('href').replace('/md5/', '')
             title = el.text().strip()
             print(f'title: {title}, hash: {hash_}')
-            f.write(json.dumps({'title': title, 'hash': hash_}) + '\n')
+            f.write(json.dumps({
+                'title': title, 
+                'hash': hash_, 
+                'slug': to_kebab(title)
+            }) + '\n')
             f.flush()
     f.close()
     
