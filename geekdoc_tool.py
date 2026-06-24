@@ -17,10 +17,11 @@ def process_doc(d):
            f != 'SUMMARY.md'
     ]
     if len(mds) == 2:
-        sorted(mds)
-        if not mds[1].startswith(mds[0]): return
-        os.remove(path.join(d, mds[1]))
-        mds.pop()
+        md1, md2 = mds
+        if len(md1) > len(md2): md1, md2 = md2, md1
+        if not md2[:-3].startswith(md1[:-3]): return
+        os.remove(path.join(d, md2))
+        mds = [md1]
     if len(mds) == 1:
         fname = path.join(d, mds[0])
         print(f'处理 {fname}')
