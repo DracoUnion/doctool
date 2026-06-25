@@ -36,6 +36,7 @@ config = {
     'catePanel': '.tag__options-content',
     'cateCloseBtn': '.tag__options-content button[title=关闭]',
     'pubBtn': '.modal__button-bar button:last-of-type',
+    'multiPlatRadio': '#multiPlatformPublishNo',
     'impWait': 5,
     'condWait': 15,
     'cookie_fname': 'csdn_cookie.json',
@@ -142,6 +143,10 @@ def csdn_post(driver: Chrome, un, pw, title, body, cate='默认分类', tags=[],
         EC.presence_of_element_located((By.CSS_SELECTOR, config['pubPanel']))
     )
     print('发布对话框已加载')
+    print('关闭多平台发布')
+    driver.execute_script('''
+        document.querySelector(arguments[0]).click()
+    ''', config['multiPlatRadio'])
     print('点击标签按钮')
     driver.find_element(By.CSS_SELECTOR, config['tagButton']).click()
     print('等待标签对话框')
