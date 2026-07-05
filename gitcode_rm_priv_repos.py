@@ -85,6 +85,7 @@ def import_gh_repos(ow):
     for i, r in enumerate(gh_repos):
         name = r['name']
         if name in exi_repos: continue
+        if name == 'home': continue
         imp_url = f'https://oauth2:{key}@github.com/OpenDocCN/{name}.git'
         print(f'[{i+1}/{len(gh_repos)}] {ow}/{name} {imp_url}')
         
@@ -159,7 +160,7 @@ def import_gh_repos(ow):
         driver.execute_script(
             'window.scrollTo(0, document.body.scrollHeight);',
         )
-        sub_btn_sele = 'button.devui-button:nth-child(2)'
+        sub_btn_sele = 'button.devui-button.devui-button--solid.devui-button--solid--primary.devui-button--md.bg-B500.ml-2'
         WebDriverWait(driver, 20).until(
             lambda d: d.find_element(By.CSS_SELECTOR, sub_btn_sele).is_enabled()
         )
