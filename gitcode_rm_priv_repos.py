@@ -9,6 +9,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.wait import WebDriverWait
 import selenium.webdriver.support.expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
 
 hdrs = {'Authorization': 'Bearer ' + os.environ.get('GITCODE_TOKEN', '')}
 
@@ -162,17 +163,23 @@ def import_gh_repos(ow):
         WebDriverWait(driver, 20).until(
             lambda d: d.find_element(By.CSS_SELECTOR, sub_btn_sele).is_enabled()
         )
-        time.sleep(5)
         print('提交按钮启用')
-        # driver.execute_script(
-        #     'document.querySelector(arguments[0]).click()',
-        #     sub_btn_sele,
-        # )
-        driver.find_element(By.CSS_SELECTOR, sub_btn_sele).click()
-
-        WebDriverWait(driver, 60).until(
-            lambda d: 'migrate' not in d.current_url
-        )
+        for i in range(10):
+            print(f'点击提交 #{i+1}')
+            driver.execute_script(
+                '''
+                document.querySelector(arguments[0]).click()
+                ''',
+                sub_btn_sele,
+            )
+            try:
+                WebDriverWait(driver, 5).until(
+                    lambda d: 'migrate' not in d.current_url
+                )
+            except TimeoutException:
+                pass
+            if 'migrate' not in driver.current_url: break
+    driver.quit()
         
 
 '''
