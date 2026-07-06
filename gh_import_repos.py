@@ -211,6 +211,32 @@ def import_repos():
             if 'new/import' not in driver.current_url: break
     driver.quit()
 
+def protect_repo(ow, repo, br='master'):
+    url = f'https://api.github.com/repos/{ow}/{repo}/branches/{br}/protection'
+    data = {
+        'required_status_checks': None,
+        'enforce_admins': None,
+        'required_pull_request_reviews': None,
+        'restrictions': None,
+    }
+    r = request_retry('PUT', url, json=data, headers=HEADERS)
+    if 200 <= r.status_code < 300:
+        return {'code': 0, 'msg': ''}
+    else:
+        return {'code': r.status_code, 'msg': r.text}
+
+def protect_repos():
+    repos = set([r['name'] for r in get_all_repos('opendoccn0')])
+    for i, r in enumerate(repos):
+        print(f'[{i+1}/{len(repos)}] opendoccn0/{r}')
+        res = protect_repo('opendoccn0', r)
+        if res['code'] == 0:
+            print('保护成功')
+        else:
+            print('保护失败：' + res['msg'])
+        time.sleep(1.5)
+
+
 
 def fork_repos():
     print(f"🚀 开始将 {SOURCE_ORG} 的所有仓库 fork 到 {TARGET_ORG}")
@@ -276,7 +302,7 @@ def fork_repos():
     print("📊 执行完成！")
 
 def main():
-    import_repos()
+    protect_repos()
 
 if __name__ == "__main__":
     main()
