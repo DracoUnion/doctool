@@ -14,6 +14,7 @@ import subprocess as subp
 from pyquery import PyQuery as pq
 from urllib.parse import quote_plus
 from playwright.sync_api import sync_playwright
+from threading import Lock
 
 HOST = 'annas-archive.gl'
 
@@ -98,6 +99,8 @@ wasmInstance.exports._calculate_hash = (input_ptr, input_len, output_ptr) => {
 dft_hdr = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:150.0) Gecko/20100101 Firefox/150.0',
 }
+
+lock = Lock()
 
 def plrt_get_html(url: str, el_chk: str = None) -> str:
     """
@@ -271,19 +274,20 @@ def download_slow(args):
     html = plrt_get_html(url, '.bg-gray-200')
     rt = pq(html)
     link = rt.find('.bg-gray-200').text().strip()
-    r = request_retry('GET', link, headers=dft_hdr, stream=True)
-    r.raise_for_status()
-    fsize = int(r.headers['Content-Length'])
-    chunk_size = 8192
-    num_chunks = (fsize + chunk_size - 1) // chunk_size 
-    with open(fname_bak, 'wb') as f:
-        for data in tqdm.tqdm(
-            r.iter_content(chunk_size),
-            total=num_chunks,
-            unit='chunk', 
-        ):
-            f.write(data)
-            f.flush()
+    with lock:
+        r = request_retry('GET', link, headers=dft_hdr, stream=True)
+        r.raise_for_status()
+        fsize = int(r.headers['Content-Length'])
+        chunk_size = 8192
+        num_chunks = (fsize + chunk_size - 1) // chunk_size 
+        with open(fname_bak, 'wb') as f:
+            for data in tqdm.tqdm(
+                r.iter_content(chunk_size),
+                total=num_chunks,
+                unit='chunk', 
+            ):
+                f.write(data)
+                f.flush()
     os.rename(fname_bak, fname)
 
     
