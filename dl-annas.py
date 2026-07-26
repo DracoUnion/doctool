@@ -1,6 +1,7 @@
 import traceback
 import tqdm
 from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
 import shutil
 import os
 import argparse
@@ -14,7 +15,8 @@ import subprocess as subp
 from pyquery import PyQuery as pq
 from urllib.parse import quote_plus
 from playwright.sync_api import sync_playwright
-from threading import Lock
+
+lock = Lock()
 
 HOST = 'annas-archive.gl'
 
@@ -99,8 +101,6 @@ wasmInstance.exports._calculate_hash = (input_ptr, input_len, output_ptr) => {
 dft_hdr = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:150.0) Gecko/20100101 Firefox/150.0',
 }
-
-lock = Lock()
 
 def plrt_get_html(url: str, el_chk: str = None) -> str:
     """
@@ -192,11 +192,12 @@ def fetch(args):
     qry_ext = ''.join(f'&ext={e}' for e in args.ext)
     qry_cont = ''.join(f'&content={c}' for c in args.content)
     qry_lang = ''.join(f'&lang={l}' for l in args.lang)
+    qry_yr = f'&termtype_1=year&termval_1={args.year}' if args.year else ''
     for i in range(args.start, args.end + 1):
         url = (
             f'https://{HOST}/search' + 
             f'?page={i}&sort={args.sort}&q={quote_plus(args.query)}' + 
-            f'{qry_ext}{qry_cont}{qry_lang}'
+            f'{qry_ext}{qry_cont}{qry_lang}{qry_yr}'
         )
         print(url)
         html = request_retry('GET', url).text
@@ -394,6 +395,7 @@ def main():
     fetch_parser.add_argument("-c", "--content", default=[], nargs='+', help="content")
     fetch_parser.add_argument("-l", "--lang", default=[], nargs='+', help="lang")
     fetch_parser.add_argument("-x", "--ext", default=[], nargs='+', help="ext name")
+    fetch_parser.add_argument("-y", "--year", help="year")
     fetch_parser.set_defaults(func=fetch)
 
     dedup_parser = subparsers.add_parser("dedup", help="dedup file")
