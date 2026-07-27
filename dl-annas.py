@@ -1,4 +1,5 @@
 import traceback
+from difflib import SequenceMatcher
 import tqdm
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
@@ -349,13 +350,20 @@ def dedup(args):
     li = open(args.flist, encoding='utf8').read().split('\n')
     li = [l for l in li if l.strip()]
     li = [json.loads(it) for it in li]
-    slug_file_map = {
-        it['slug']:it
-        for it in li
-    }
-    li = list(slug_file_map.values())
-    li = [json.dumps(it) for it in li]
-    li = '\n'.join(li)
+    
+    norm = lambda s: s.split(':')[0].split('：')[0]
+    calc_sim = lambda s1, s2: SequenceMatcher(None, s1, s2).ratio()
+    kept_name = []
+    kept = []
+    for it in li:
+        name = norm(it['title'])
+        print(name)
+        if any(calc_sim(name, k) >= args.sim for k in kept_name):
+            continue
+        kept_name.append(name)
+        kept.append(it)
+
+    li = [json.dumps(it) for it in kept]
     open(args.flist, 'w', encoding='utf8').write(li)
     print('done...')
 
@@ -400,6 +408,7 @@ def main():
 
     dedup_parser = subparsers.add_parser("dedup", help="dedup file")
     dedup_parser.add_argument("flist", help="JSONL list file")
+    dedup_parser.add_argument("-s", "--sim", type=float, default=0.8, help="similarity")
     dedup_parser.set_defaults(func=dedup)
 
 
