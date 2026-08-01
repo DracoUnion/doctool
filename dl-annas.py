@@ -1,5 +1,4 @@
 import traceback
-from difflib import SequenceMatcher
 import tqdm
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
@@ -101,6 +100,7 @@ wasmInstance.exports._calculate_hash = (input_ptr, input_len, output_ptr) => {
 
 dft_hdr = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:150.0) Gecko/20100101 Firefox/150.0',
+    'Referer': f'https://{HOST}',
 }
 
 def plrt_get_html(url: str, el_chk: str = None) -> str:
@@ -193,12 +193,11 @@ def fetch(args):
     qry_ext = ''.join(f'&ext={e}' for e in args.ext)
     qry_cont = ''.join(f'&content={c}' for c in args.content)
     qry_lang = ''.join(f'&lang={l}' for l in args.lang)
-    qry_yr = f'&termtype_1=year&termval_1={args.year}' if args.year else ''
     for i in range(args.start, args.end + 1):
         url = (
             f'https://{HOST}/search' + 
             f'?page={i}&sort={args.sort}&q={quote_plus(args.query)}' + 
-            f'{qry_ext}{qry_cont}{qry_lang}{qry_yr}'
+            f'{qry_ext}{qry_cont}{qry_lang}'
         )
         print(url)
         html = request_retry('GET', url).text
@@ -350,20 +349,13 @@ def dedup(args):
     li = open(args.flist, encoding='utf8').read().split('\n')
     li = [l for l in li if l.strip()]
     li = [json.loads(it) for it in li]
-    
-    norm = lambda s: s.split(':')[0].split('：')[0]
-    calc_sim = lambda s1, s2: SequenceMatcher(None, s1, s2).ratio()
-    kept_name = []
-    kept = []
-    for it in li:
-        name = norm(it['title'])
-        print(name)
-        if any(calc_sim(name, k) >= args.sim for k in kept_name):
-            continue
-        kept_name.append(name)
-        kept.append(it)
-
-    li = [json.dumps(it) for it in kept]
+    slug_file_map = {
+        it['slug']:it
+        for it in li
+    }
+    li = list(slug_file_map.values())
+    li = [json.dumps(it) for it in li]
+    li = '\n'.join(li)
     open(args.flist, 'w', encoding='utf8').write(li)
     print('done...')
 
@@ -403,12 +395,10 @@ def main():
     fetch_parser.add_argument("-c", "--content", default=[], nargs='+', help="content")
     fetch_parser.add_argument("-l", "--lang", default=[], nargs='+', help="lang")
     fetch_parser.add_argument("-x", "--ext", default=[], nargs='+', help="ext name")
-    fetch_parser.add_argument("-y", "--year", help="year")
     fetch_parser.set_defaults(func=fetch)
 
     dedup_parser = subparsers.add_parser("dedup", help="dedup file")
     dedup_parser.add_argument("flist", help="JSONL list file")
-    dedup_parser.add_argument("-s", "--sim", type=float, default=0.8, help="similarity")
     dedup_parser.set_defaults(func=dedup)
 
 
