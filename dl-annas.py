@@ -260,7 +260,8 @@ def download_lgli(args):
 def download_slow(args):
     hash_ = args.hash
     url = f'https://{HOST}/md5/{hash_}'
-    html = request_retry('GET', url).text
+    # html = request_retry('GET', url).text
+    html = plrt_get_html(url, '.text-gray-800')
     rt = pq(html)
     title = fname_escape(rt.find('div.font-semibold:nth-child(4)').text().strip().replace(' 🔍', ''))
     ext = rt.find('.text-gray-800').text().split(' · ')[1].lower()
