@@ -14,7 +14,9 @@ import copy
 import subprocess as subp
 from pyquery import PyQuery as pq
 from urllib.parse import quote_plus
-from playwright.sync_api import sync_playwright
+from camoufox import Camoufox
+from camoufox.addons import DefaultAddons
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 lock = Lock()
 
@@ -103,46 +105,32 @@ dft_hdr = {
     'Referer': f'https://{HOST}',
 }
 
-def plrt_get_html(url: str, el_chk: str = None) -> str:
+def get_camou_opts(headless=True):
+    return {
+        "headless": headless,
+        "humanize": True,
+        "locale": "en-US",
+        "os": ("windows",),
+        "exclude_addons": [DefaultAddons.UBO],
+    }
+
+
+def camou_get_html(page, url: str, el_chk: str = None) -> str:
     """
     使用 Playwright 启动浏览器，访问页面，等待验证通过后获取 Cookies。
     """
-    with sync_playwright() as p:
-        # 1. 启动浏览器（推荐使用有头模式，无头模式可能被检测）
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
-                # 禁用AutomationControlled自动化标记（Chrome94+核心参数）
-                "--disable-blink-features=AutomationControlled", 
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-blink-features=AutomationControlled",
-                # 模拟真人最大化打开浏览器
-                "--start-maximized",
-            ],
-        )
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            viewport={"width":1920,"height":1080},
-            locale="zh-CN",
-            timezone_id="Asia/Shanghai"
-        )
-        context.add_init_script(PATCH_ENV_JS)
-        context.add_init_script(MOCK_WASM_JS)
-        page = context.new_page()
-        
-        # 2. 访问目标网站，等待网络空闲，让验证有机会完成
-        page.goto(url)
-        page.wait_for_load_state("networkidle")
-        
-        # 3. 尝试等待关键的 el_chk ，最多等待 20 秒
-        #    这比单纯等待timeout更智能
-        if el_chk:
-            page.wait_for_selector(el_chk, timeout=20000)
-        # 4. 获取HTML并关闭浏览器
-        html = page.content()
-        browser.close()
-        return html
+    
+    # 2. 访问目标网站，等待网络空闲，让验证有机会完成
+    page.goto(url)
+    page.wait_for_load_state("networkidle")
+    
+    # 3. 尝试等待关键的 el_chk ，最多等待 20 秒
+    #    这比单纯等待timeout更智能
+    if el_chk:
+        page.wait_for_selector(el_chk, timeout=20000)
+    # 4. 获取HTML并关闭浏览器
+    html = page.content()
+    return html
 
 def get_bt_idx(bt_data, fname):
     bt = bencode.bdecode(bt_data)
@@ -258,39 +246,43 @@ def download_lgli(args):
     os.rename(fname_bak, fname)
 
 def download_slow(args):
-    hash_ = args.hash
-    url = f'https://{HOST}/md5/{hash_}'
-    # html = request_retry('GET', url).text
-    html = plrt_get_html(url, '.text-gray-800')
-    rt = pq(html)
-    title = fname_escape(rt.find('div.font-semibold:nth-child(4)').text().strip().replace(' 🔍', ''))
-    ext = rt.find('.text-gray-800').text().split(' · ')[1].lower()
-    fname = f'{title}.{ext}'
-    fname_bak = fname_escape(f'{fname}.bak')
-    if os.path.isfile(fname):
-        print(f'{fname} 已存在')
-        return
-    print(f'fname: {fname}')
+    with Camoufox(**get_camou_opts(args.headless)) as browser:
+        page = browser.new_page()
+        hash_ = args.hash
+        url = f'https://{HOST}/md5/{hash_}'
+        # html = request_retry('GET', url).text
+        # 1. 启动浏览器（推荐使用有头模式，无头模式可能被检测）
+        html = camou_get_html(page, url, '.text-gray-800')
+        rt = pq(html)
+        title = fname_escape(rt.find('div.font-semibold:nth-child(4)').text().strip().replace(' 🔍', ''))
+        ext = rt.find('.text-gray-800').text().split(' · ')[1].lower()
+        fname = f'{title}.{ext}'
+        fname_bak = fname_escape(f'{fname}.bak')
+        if os.path.isfile(fname):
+            print(f'{fname} 已存在')
+            return
+        print(f'fname: {fname}')
 
-    url = f'https://{HOST}/slow_download/{hash_}/0/4'
-    html = plrt_get_html(url, '.bg-gray-200')
-    rt = pq(html)
-    link = rt.find('.bg-gray-200').text().strip()
-    with lock:
-        r = request_retry('GET', link, headers=dft_hdr, stream=True)
-        r.raise_for_status()
-        fsize = int(r.headers['Content-Length'])
-        chunk_size = 8192
-        num_chunks = (fsize + chunk_size - 1) // chunk_size 
-        with open(fname_bak, 'wb') as f:
-            for data in tqdm.tqdm(
-                r.iter_content(chunk_size),
-                total=num_chunks,
-                unit='chunk', 
-            ):
-                f.write(data)
-                f.flush()
-    os.rename(fname_bak, fname)
+        url = f'https://{HOST}/slow_download/{hash_}/0/4'
+        html = camou_get_html(page, url, '.bg-gray-200')
+        rt = pq(html)
+        link = rt.find('.bg-gray-200').text().strip()
+        with lock:
+            dft_hdr['Referer'] = url
+            r = request_retry('GET', link, headers=dft_hdr, stream=True)
+            r.raise_for_status()
+            fsize = int(r.headers['Content-Length'])
+            chunk_size = 8192
+            num_chunks = (fsize + chunk_size - 1) // chunk_size 
+            with open(fname_bak, 'wb') as f:
+                for data in tqdm.tqdm(
+                    r.iter_content(chunk_size),
+                    total=num_chunks,
+                    unit='chunk', 
+                ):
+                    f.write(data)
+                    f.flush()
+        os.rename(fname_bak, fname)
 
     
 
@@ -372,6 +364,7 @@ def main():
 
     dl_slow_parser = subparsers.add_parser("dl-slow", help="download file")
     dl_slow_parser.add_argument("hash", help="file hash")
+    dl_slow_parser.add_argument("-H", "--headless", action='store_true', help="headless")
     dl_slow_parser.set_defaults(func=download_slow)
 
 
@@ -384,6 +377,7 @@ def main():
     batch_parser.add_argument("-t", "--threads", type=int, default=8, help="threads num")
     batch_parser.add_argument("-s", "--site", default='annas', choices=['slow', 'bt', 'lgli'],  help="site")
     batch_parser.add_argument("-st", "--start", type=int, default=0,  help="start")
+    batch_parser.add_argument("-H", "--headless", action='store_true', help="headless")
     batch_parser.set_defaults(func=batch)
 
 
