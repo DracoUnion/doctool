@@ -54,39 +54,36 @@ def _clean_cookie(raw):
     return out
 
 
-def create_driver(headless=False):
-    """启动 camoufox，返回 (browser, context, page)。"""
-    launch_opts = {
+def get_camou_opts(headless=True):
+    return {
         "headless": headless,
         "humanize": True,
         "locale": "en-US",
         "os": ("windows",),
         "exclude_addons": [DefaultAddons.UBO],
     }
-    browser = Camoufox(**launch_opts).__enter__()
-    context = browser.new_context()
-    page = context.new_page()
-    return browser, context, page
+
 
 
 def csdn_post_retry(args, title, body):
-    browser, context, page = create_driver(args.headless)
-    page.set_default_timeout(config['condWait'] * 1000)
-    for i in range(args.retry):
-        try:
-            csdn_post(
-                context, page,
-                args.un, args.pw,
-                title, body,
-                args.cate, args.tags.split(','),
-                args.retry
-            )
-            break
-        except Exception as ex:
-            print(f'CSDN Post Retry #{i}: {traceback.format_exc()}')
-            if i == args.retry - 1:
-                raise ex
-    browser.close()
+    with Camoufox(**get_camou_opts(args.headless)) as browser:
+        context = browser.new_context()
+        page = context.new_page()
+        page.set_default_timeout(config['condWait'] * 1000)
+        for i in range(args.retry):
+            try:
+                csdn_post(
+                    context, page,
+                    args.un, args.pw,
+                    title, body,
+                    args.cate, args.tags.split(','),
+                    args.retry
+                )
+                break
+            except Exception as ex:
+                print(f'CSDN Post Retry #{i}: {traceback.format_exc()}')
+                if i == args.retry - 1:
+                    raise ex
 
 
 def csdn_post(context, page, un, pw, title, body, cate='默认分类', tags=[], retry=20):
