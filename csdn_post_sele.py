@@ -3,20 +3,17 @@ import traceback
 import argparse
 from os import path
 import time
-import os 
+import os
 import json
-from selenium.webdriver import Chrome
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support.wait import WebDriverWait
-import selenium.webdriver.support.expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
+from camoufox import Camoufox
+from camoufox.addons import DefaultAddons
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from BookerDownloadTool.util import *
 from BookerMarkdownTool.util import get_md_title
 
 config = {
     'selectPwTab': '.login-third-passwd',
-	'unBtn': 'input[autocomplete=username]',
+    'unBtn': 'input[autocomplete=username]',
     'pwBtn': 'input[autocomplete=current-password]',
     'pwVisBtn': '.base-input-icon-password',
     'cosentCheck': '.login-inform i',
@@ -42,181 +39,174 @@ config = {
     'cookie_fname': 'csdn_cookie.json',
 }
 
+
+def _clean_cookie(raw):
+    """把 Selenium/JSON 格式的 cookie 转成 Playwright 可接受的格式。"""
+    key_map = {'expiry': 'expires'}
+    out = {'path': '/'}
+    valid_keys = {'name', 'value', 'domain', 'path', 'expires', 'httpOnly', 'secure', 'sameSite'}
+    for k, v in raw.items():
+        key = key_map.get(k, k)
+        if key in valid_keys:
+            out[key] = v
+    if out.get('sameSite') not in ('Strict', 'Lax', 'None'):
+        out.pop('sameSite', None)
+    return out
+
+
 def create_driver(headless=False):
-    options = Options()
-    options.binary_location = r'D:\Program Files\chrome-for-testing\chrome.exe'
-    custom_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-    if headless:
-        options.add_argument('--headless')
-    options.add_argument('--disable-gpu')
-    options.add_argument('--log-level=3')
-    options.add_argument(f'--user-agent={UA}')
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument(f'--user-agent={custom_user_agent}')
-    driver = webdriver.Chrome(options=options)
-    driver.set_script_timeout(1000)
-    # StealthJS
-    # stealth = open(d('stealth.min.js')).read()
-    # driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-    #     "source": stealth
-    # })
-    return driver
+    """启动 camoufox，返回 (browser, context, page)。"""
+    launch_opts = {
+        "headless": headless,
+        "humanize": True,
+        "locale": "en-US",
+        "os": ("windows",),
+        "exclude_addons": [DefaultAddons.UBO],
+    }
+    browser = Camoufox(**launch_opts).__enter__()
+    context = browser.new_context()
+    page = context.new_page()
+    return browser, context, page
+
 
 def csdn_post_retry(args, title, body):
+    browser, context, page = create_driver(args.headless)
+    page.set_default_timeout(config['condWait'] * 1000)
     for i in range(args.retry):
         try:
-            driver = create_driver(args.headless)
             csdn_post(
-                driver, args.un, args.pw, 
-                title, body, 
+                context, page,
+                args.un, args.pw,
+                title, body,
                 args.cate, args.tags.split(','),
                 args.retry
             )
-            driver.close()
             break
         except Exception as ex:
-            print(f'CSDN Post Retry #{i}: {ex}')
+            print(f'CSDN Post Retry #{i}: {traceback.format_exc()}')
             if i == args.retry - 1:
                 raise ex
-                
-    
+    browser.close()
 
-def csdn_post(driver: Chrome, un, pw, title, body, cate='默认分类', tags=[], retry=20):
+
+def csdn_post(context, page, un, pw, title, body, cate='默认分类', tags=[], retry=20):
     # 登录
     if path.isfile(config['cookie_fname']):
         print('导入Cookie')
-        driver.get('https://csdn.net')
+        page.goto('https://csdn.net')
         cookies = json.loads(open(config['cookie_fname'], encoding='utf8').read())
-        # for c in cookies: c['domain'] = '.csdn.net'
+        cookies = [_clean_cookie(c) for c in cookies]
         print(cookies)
-        for c in cookies: driver.add_cookie(c)
+        context.add_cookies(cookies)
+
     print('打开登录页面')
-    driver.get('https://passport.csdn.net/login')
+    page.goto('https://passport.csdn.net/login')
     print('等待页面加载')
-    driver.implicitly_wait(config['impWait'])
+    page.wait_for_load_state('networkidle')
     print('页面加载完成')
-    print('driver.current_url', driver.current_url)
-    if driver.current_url.startswith('https://passport.csdn.net'):
+    print('page.url', page.url)
+    if page.url.startswith('https://passport.csdn.net'):
         print('添加账号密码')
-        driver.find_element(By.CSS_SELECTOR, config['selectPwTab']).click()
-        driver.find_element(By.CSS_SELECTOR, config['unBtn']).send_keys(un)
-        driver.find_element(By.CSS_SELECTOR, config['pwBtn']).send_keys(pw)
-        # driver.find_element(By.CSS_SELECTOR, config['cosentCheck']).click()
+        page.locator(config['selectPwTab']).click()
+        page.locator(config['unBtn']).fill(un)
+        page.locator(config['pwBtn']).fill(pw)
         print('登录')
-        driver.find_element(By.CSS_SELECTOR, config['loginBtn']).click()
+        page.locator(config['loginBtn']).click()
         print('等待登录后跳转')
-        WebDriverWait(driver, 60).until(
-            lambda d: not d.current_url.startswith('https://passport.csdn.net')
+        page.wait_for_function(
+            '() => !location.href.startsWith("https://passport.csdn.net")',
+            timeout=60000
         )
         print('保存 COOKIE')
-        cookies = driver.get_cookies()
-        # for c in cookies: c['domain'] = '.csdn.net'
+        cookies = context.cookies()
         open(config['cookie_fname'], 'w', encoding='utf8').write(json.dumps(cookies))
 
-    # driver.current_url
     print('打开编辑器')
-    driver.get('https://editor.csdn.net/md/')
+    page.goto('https://editor.csdn.net/md/')
     print('等待编辑器加载')
-    driver.implicitly_wait(config['impWait'])
+    page.wait_for_load_state('networkidle')
     print('编辑器加载完成')
-    print('driver.current_url', driver.current_url)
+    print('page.url', page.url)
     print('填写标题内容')
-    '''
-    el_title = driver.find_element(By.CSS_SELECTOR, config['titleText'])
-    el_title.clear()
-    el_title.send_keys(title[:100])
-    '''
-    driver.execute_script('''
-        var el = document.querySelector(arguments[0]) 
-        el.value = arguments[1]
-        el.dispatchEvent(new Event('input', {bubbles: true}))
-    ''', config['titleText'], title[:100])
-    # driver.find_element(By.CSS_SELECTOR, config['bodyText']).send_keys(body)
-    driver.execute_script(
-        'document.querySelector(arguments[0]).textContent = arguments[1]',
-        config['bodyText'], body,
+    page.locator(config['titleText']).evaluate(
+        '''(el, value) => {
+            el.value = value;
+            el.dispatchEvent(new Event('input', {bubbles: true}));
+        }''', 
+        title[:100]
     )
+
+    # body：直接设置 textContent，避免在富文本框中逐字输入
+    page.locator(config['bodyText']).evaluate(
+        '(el, value) => el.textContent = value',
+        body
+    )
+
     print('点击发布按钮')
-    driver.find_element(By.CSS_SELECTOR, config['postButton']).click()
+    page.locator(config['postButton']).click()
     print('等待发布对话框')
-    WebDriverWait(driver, config['condWait']).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, config['pubPanel']))
-    )
+    page.wait_for_selector(config['pubPanel'], state='visible')
     print('发布对话框已加载')
     print('关闭多平台发布')
-    driver.execute_script('''
-        document.querySelector(arguments[0]).click()
-    ''', config['multiPlatRadio'])
+    page.locator(config['multiPlatRadio']).evaluate('el => el.click()')
     print('点击标签按钮')
-    driver.find_element(By.CSS_SELECTOR, config['tagButton']).click()
+    page.locator(config['tagButton']).click()
     print('等待标签对话框')
-    WebDriverWait(driver, config['condWait']).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, config['tagPanel']))
-    )
+    page.wait_for_selector(config['tagPanel'], state='visible')
     print('标签对话框已加载')
     print('设置标签')
-    el_tag_text = driver.find_element(By.CSS_SELECTOR, config['tagText'])
+    el_tag_text = page.locator(config['tagText'])
     for t in tags:
-        el_tag_text.send_keys(t)
-        el_tag_text.send_keys(Keys.ENTER)
-        el_tag_text.clear()
-    driver.find_element(By.CSS_SELECTOR, config['tagCloseButton']).click()
+        el_tag_text.fill(t)
+        el_tag_text.press('Enter')
+        el_tag_text.fill('')
+    page.locator(config['tagCloseButton']).click()
 
     print('删除已有类别')
-    for el in driver.find_elements(By.CSS_SELECTOR, config['cateDelBtn']):
-        el.click()
-    if not driver.find_elements(By.CSS_SELECTOR, config['cateText']):
+    for el in page.query_selector_all(config['cateDelBtn']):
+        page.evaluate('el => el.click()', el)
+    if page.locator(config['cateText']).count() == 0:
         print('点击类别按钮')
-        driver.find_element(By.CSS_SELECTOR, config['cateBtn']).click()
+        page.locator(config['cateBtn']).click()
         print('等待类别文本框')
-        WebDriverWait(driver, config['condWait']).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, config['cateText']))
-        )
+        page.wait_for_selector(config['cateText'], state='visible')
     print('类别文本框已加载')
     print('设置类别')
-    driver.find_element(By.CSS_SELECTOR, config['cateText']).send_keys(cate)
-    driver.find_element(By.CSS_SELECTOR, config['cateCloseBtn']).click()
+    page.locator(config['cateText']).fill(cate)
+    page.locator(config['cateCloseBtn']).click()
     for i in range(retry):
         print(f'发布：{i}')
-        driver.find_element(By.CSS_SELECTOR, config['pubBtn']).click()
+        page.locator(config['pubBtn']).click()
         print('等待消息提示')
-        WebDriverWait(driver, config['condWait']).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, config['noticeBox']))
-        )
-        time.sleep(1)
-        el_notice = driver.find_element(By.CSS_SELECTOR, config['noticeBox'])
-        notice = el_notice.text
+        notice_el = page.wait_for_selector(config['noticeBox'], state='visible')
+        page.wait_for_timeout(1000)
+        notice = notice_el.text_content()
         print('消息：', notice)
         if '文章标签' in notice:
             raise RuntimeError('请设置文章标签')
-        if '成功' in notice or \
-           '加载中' in notice:
+        if '成功' in notice or '加载中' in notice:
             print('等待成功页面')
-            WebDriverWait(driver, config['condWait']).until(
-                lambda d: '/success/' in d.current_url
+            page.wait_for_function(
+                '() => location.href.includes("/success/")',
+                timeout=config['condWait'] * 1000
             )
             print('发布成功')
             break
-        
+
         if i == retry - 1:
             raise Exception('发布失败')
         time.sleep(1)
 
 
 def main():
-    
     parser = argparse.ArgumentParser(prog="GPTTestTrain", description="GPTTestTrain", formatter_class=argparse.RawDescriptionHelpFormatter)
-    # parser.add_argument("-v", "--version", action="version", version=f"BookerMarkdownTool version: {__version__}")
-    # parser.set_defaults(func=lambda x: parser.print_help())
-    # subparsers = parser.add_subparsers()
-    # train_parser = subparsers.add_parser("train", help="train GLM model")
     parser.add_argument("fname", help="MD fname")
     parser.add_argument("-u", "--un", default=os.environ.get('CSDN_USERNAME', ''), help="username")
     parser.add_argument("-p", "--pw", default=os.environ.get('CSDN_PASSWORD', ''), help="password")
-    parser.add_argument("-c", "--cate", default='默认分类',  help="cate")
-    parser.add_argument("-t", "--tags", default='默认标签',  help="tags")
-    parser.add_argument("-r", "--retry", type=int, default=20,  help="retry")
-    parser.add_argument("-H","--headless", action='store_true', help="hdls")
+    parser.add_argument("-c", "--cate", default='默认分类', help="cate")
+    parser.add_argument("-t", "--tags", default='默认标签', help="tags")
+    parser.add_argument("-r", "--retry", type=int, default=20, help="retry")
+    parser.add_argument("-H", "--headless", action='store_true', help="hdls")
     args = parser.parse_args()
 
     if path.isfile(args.fname):
@@ -230,8 +220,7 @@ def main():
     if not fnames:
         print('请提供 MD 文件或目录')
         return
-    
-    # driver.maximize_window()
+
     for f in fnames:
         print(f)
         md = open(f, encoding='utf8').read()
@@ -240,15 +229,15 @@ def main():
         if not title:
             print(f'{f} MD 文件无标题')
             return
-        if len(title) < 5: title *= 5
+        if len(title) < 5:
+            title *= 5
         body = md[pos[1]:]
         csdn_post_retry(args, title, body)
         os.remove(f)
 
 
-    
-if __name__ == '__main__': 
+if __name__ == '__main__':
     try:
         main()
-    except:
+    except Exception:
         traceback.print_exc()
