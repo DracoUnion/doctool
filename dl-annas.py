@@ -264,34 +264,42 @@ def download_slow(args):
     # html = request_retry('GET', url).text
     html = plrt_get_html(url, '.text-gray-800', args.headless)
     rt = pq(html)
-    title = fname_escape(rt.find('div.font-semibold:nth-child(4)').text().strip().replace(' 🔍', ''))
+    title = rt.find('div.font-semibold:nth-child(4)') \
+        .text().strip().replace(' 🔍', '')
     ext = rt.find('.text-gray-800').text().split(' · ')[1].lower()
-    fname = f'{title}.{ext}'
+    fname = fname_escape(f'{title[:100]}.{ext}')
     fname_bak = fname_escape(f'{fname}.bak')
     if os.path.isfile(fname):
         print(f'{fname} 已存在')
         return
     print(f'fname: {fname}')
 
-    idx = random.choice([4,5,6,7])
-    url = f'https://{HOST}/slow_download/{hash_}/0/{idx}'
+
+    el_links_li = rt('#md5-panel-downloads > div:nth-child(2) li.list-disc') \
+        .filter(lambda i, el: 'no waitlist' in pq(el).text())
+    if not el_links_li:
+       print(f'{fname} 未找到下载链接')
+       return 
+    
+    url = pq(random.choice(el_links_li)).children('a').attr('href')
+    url = f'https://{HOST}{url}'
+    # url = f'https://{HOST}/slow_download/{hash_}/0/{idx}'
     html = plrt_get_html(url, '.bg-gray-200', args.headless)
     rt = pq(html)
     link = rt.find('.bg-gray-200').text().strip()
-    with lock:
-        r = request_retry('GET', link, headers=dft_hdr, stream=True)
-        r.raise_for_status()
-        fsize = int(r.headers['Content-Length'])
-        chunk_size = 8192
-        num_chunks = (fsize + chunk_size - 1) // chunk_size 
-        with open(fname_bak, 'wb') as f:
-            for data in tqdm.tqdm(
-                r.iter_content(chunk_size),
-                total=num_chunks,
-                unit='chunk', 
-            ):
-                f.write(data)
-                f.flush()
+    r = request_retry('GET', link, headers=dft_hdr, stream=True)
+    r.raise_for_status()
+    fsize = int(r.headers['Content-Length'])
+    chunk_size = 8192
+    num_chunks = (fsize + chunk_size - 1) // chunk_size 
+    with open(fname_bak, 'wb') as f:
+        for data in tqdm.tqdm(
+            r.iter_content(chunk_size),
+            total=num_chunks,
+            unit='chunk', 
+        ):
+            f.write(data)
+            f.flush()
     os.rename(fname_bak, fname)
 
     
