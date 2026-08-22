@@ -267,7 +267,7 @@ def download_slow(args):
     title = rt.find('div.font-semibold:nth-child(4)') \
         .text().strip().replace(' 🔍', '')
     ext = rt.find('.text-gray-800').text().split(' · ')[1].lower()
-    fname = fname_escape(f'{title[:100]}.{ext}')
+    fname = fname_escape(f'{title[:200]}.{ext}')
     fname_bak = fname_escape(f'{fname}.bak')
     if os.path.isfile(fname):
         print(f'{fname} 已存在')
