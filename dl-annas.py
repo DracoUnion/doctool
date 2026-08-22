@@ -104,46 +104,46 @@ dft_hdr = {
     'Referer': f'https://{HOST}',
 }
 
-def plrt_get_html(url: str, el_chk: str = None, headless=True) -> str:
-    """
-    使用 Playwright 启动浏览器，访问页面，等待验证通过后获取 Cookies。
-    """
-    with sync_playwright() as p:
-        # 1. 启动浏览器（推荐使用有头模式，无头模式可能被检测）
-        browser = p.chromium.launch(
-            headless=headless,
-            args=[
-                # 禁用AutomationControlled自动化标记（Chrome94+核心参数）
-                "--disable-blink-features=AutomationControlled", 
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-blink-features=AutomationControlled",
-                # 模拟真人最大化打开浏览器
-                "--start-maximized",
-            ],
-        )
-        context = browser.new_context(
+def plrt_new_context(browser):
+    context =  browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             viewport={"width":1920,"height":1080},
             locale="zh-CN",
             timezone_id="Asia/Shanghai"
         )
-        context.add_init_script(PATCH_ENV_JS)
-        context.add_init_script(MOCK_WASM_JS)
-        page = context.new_page()
-        
-        # 2. 访问目标网站，等待网络空闲，让验证有机会完成
-        page.goto(url)
-        page.wait_for_load_state("networkidle")
-        
-        # 3. 尝试等待关键的 el_chk ，最多等待 20 秒
-        #    这比单纯等待timeout更智能
-        if el_chk:
-            page.wait_for_selector(el_chk, timeout=20000)
-        # 4. 获取HTML并关闭浏览器
-        html = page.content()
-        browser.close()
-        return html
+    context.add_init_script(PATCH_ENV_JS)
+    context.add_init_script(MOCK_WASM_JS)
+    return context
+
+def plrt_new_browser(plrt, headless=True):
+    return plrt.chromium.launch(
+        headless=headless,
+        args=[
+            # 禁用AutomationControlled自动化标记（Chrome94+核心参数）
+            "--disable-blink-features=AutomationControlled", 
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-blink-features=AutomationControlled",
+            # 模拟真人最大化打开浏览器
+            "--start-maximized",
+        ],
+    )
+
+def plrt_get_html(page, url: str, el_chk: str = None) -> str:
+    """
+    使用 Playwright 启动浏览器，访问页面，等待验证通过后获取 Cookies。
+    """  
+    # 2. 访问目标网站，等待网络空闲，让验证有机会完成
+    page.goto(url)
+    page.wait_for_load_state("networkidle")
+    
+    # 3. 尝试等待关键的 el_chk ，最多等待 20 秒
+    #    这比单纯等待timeout更智能
+    if el_chk:
+        page.wait_for_selector(el_chk, timeout=50000)
+    # 4. 获取HTML并关闭浏览器
+    html = page.content()
+    return html
 
 def get_bt_idx(bt_data, fname):
     bt = bencode.bdecode(bt_data)
@@ -190,33 +190,39 @@ def fetch(args):
     # https://annas-archive.gl/search
     # ?index=&page=1&sort=newest&content=book_nonfiction
     # &content=book_unknown&ext=pdf&ext=epub&lang=en&display=&q=tarot
-    f = open(args.ofname, 'a', encoding='utf8')
-    qry_ext = ''.join(f'&ext={e}' for e in args.ext)
-    qry_cont = ''.join(f'&content={c}' for c in args.content)
-    qry_lang = ''.join(f'&lang={l}' for l in args.lang)
-    for i in range(args.start, args.end + 1):
-        url = (
-            f'https://{HOST}/search' + 
-            f'?page={i}&sort={args.sort}&q={quote_plus(args.query)}' + 
-            f'{qry_ext}{qry_cont}{qry_lang}'
-        )
-        print(url)
-        html = request_retry('GET', url).text
-        rt = pq(html)
-        el_links = rt.find('a.text-lg[href^="/md5/"]')
-        if not el_links: break
-        for el in el_links:
-            el = pq(el)
-            hash_ = el.attr('href').replace('/md5/', '')
-            title = el.text().strip()
-            print(f'title: {title}, hash: {hash_}')
-            f.write(json.dumps({
-                'title': title, 
-                'hash': hash_, 
-                'slug': to_kebab(title)
-            }) + '\n')
-            f.flush()
-    f.close()
+    with sync_playwright() as p:
+        browser = plrt_new_browser(p, args.headless)
+        context = plrt_new_context(browser)
+        page = context.new_page()
+    
+        f = open(args.ofname, 'a', encoding='utf8')
+        qry_ext = ''.join(f'&ext={e}' for e in args.ext)
+        qry_cont = ''.join(f'&content={c}' for c in args.content)
+        qry_lang = ''.join(f'&lang={l}' for l in args.lang)
+        for i in range(args.start, args.end + 1):
+            url = (
+                f'https://{HOST}/search' + 
+                f'?page={i}&sort={args.sort}&q={quote_plus(args.query)}' + 
+                f'{qry_ext}{qry_cont}{qry_lang}'
+            )
+            print(url)
+            html = plrt_get_html(page, url, '.header-inner-top')
+            rt = pq(html)
+            el_links = rt.find('a.text-lg[href^="/md5/"]')
+            if not el_links: break
+            for el in el_links:
+                el = pq(el)
+                hash_ = el.attr('href').replace('/md5/', '')
+                title = el.text().strip()
+                print(f'title: {title}, hash: {hash_}')
+                f.write(json.dumps({
+                    'title': title, 
+                    'hash': hash_, 
+                    'slug': to_kebab(title)
+                }) + '\n')
+                f.flush()
+        f.close()
+        browser.close()
     
 def download_lgli(args):
     url = f'https://libgen.li/ads.php?md5={args.hash}'
@@ -259,48 +265,53 @@ def download_lgli(args):
     os.rename(fname_bak, fname)
 
 def download_slow(args):
-    hash_ = args.hash
-    url = f'https://{HOST}/md5/{hash_}'
-    # html = request_retry('GET', url).text
-    html = plrt_get_html(url, '.text-gray-800', args.headless)
-    rt = pq(html)
-    title = rt.find('div.font-semibold:nth-child(4)') \
-        .text().strip().replace(' 🔍', '')
-    ext = rt.find('.text-gray-800').text().split(' · ')[1].lower()
-    fname = fname_escape(f'{title[:200]}.{ext}')
-    fname_bak = fname_escape(f'{fname}.bak')
-    if os.path.isfile(fname):
-        print(f'{fname} 已存在')
-        return
-    print(f'fname: {fname}')
+    with sync_playwright() as p:
+        browser = plrt_new_browser(p, args.headless)
+        context = plrt_new_context(browser)
+        page = context.new_page()
+
+        hash_ = args.hash
+        url = f'https://{HOST}/md5/{hash_}'
+        # html = request_retry('GET', url).text
+        html = plrt_get_html(page, url, '.text-gray-800')
+        rt = pq(html)
+        title = rt.find('div.font-semibold:nth-child(4)') \
+            .text().strip().replace(' 🔍', '')
+        ext = rt.find('.text-gray-800').text().split(' · ')[1].lower()
+        fname = fname_escape(f'{title[:200]}.{ext}')
+        fname_bak = fname_escape(f'{fname}.bak')
+        if os.path.isfile(fname):
+            print(f'{fname} 已存在')
+            return
+        print(f'fname: {fname}')
 
 
-    el_links_li = rt('#md5-panel-downloads > div:nth-child(2) li.list-disc') \
-        .filter(lambda i, el: 'no waitlist' in pq(el).text())
-    if not el_links_li:
-       print(f'{fname} 未找到下载链接')
-       return 
-    
-    url = pq(random.choice(el_links_li)).children('a').attr('href')
-    url = f'https://{HOST}{url}'
-    # url = f'https://{HOST}/slow_download/{hash_}/0/{idx}'
-    html = plrt_get_html(url, '.bg-gray-200', args.headless)
-    rt = pq(html)
-    link = rt.find('.bg-gray-200').text().strip()
-    r = request_retry('GET', link, headers=dft_hdr, stream=True)
-    r.raise_for_status()
-    fsize = int(r.headers['Content-Length'])
-    chunk_size = 8192
-    num_chunks = (fsize + chunk_size - 1) // chunk_size 
-    with open(fname_bak, 'wb') as f:
-        for data in tqdm.tqdm(
-            r.iter_content(chunk_size),
-            total=num_chunks,
-            unit='chunk', 
-        ):
-            f.write(data)
-            f.flush()
-    os.rename(fname_bak, fname)
+        el_links_li = rt('#md5-panel-downloads > div:nth-child(2) li.list-disc') \
+            .filter(lambda i, el: 'no waitlist' in pq(el).text())
+        if not el_links_li:
+            print(f'{fname} 未找到下载链接')
+            return 
+        
+        url = pq(random.choice(el_links_li)).children('a').attr('href')
+        url = f'https://{HOST}{url}'
+        # url = f'https://{HOST}/slow_download/{hash_}/0/{idx}'
+        html = plrt_get_html(page, url, '.bg-gray-200')
+        rt = pq(html)
+        link = rt.find('.bg-gray-200').text().strip()
+        r = request_retry('GET', link, headers=dft_hdr, stream=True)
+        r.raise_for_status()
+        fsize = int(r.headers['Content-Length'])
+        chunk_size = 8192
+        num_chunks = (fsize + chunk_size - 1) // chunk_size 
+        with open(fname_bak, 'wb') as f:
+            for data in tqdm.tqdm(
+                r.iter_content(chunk_size),
+                total=num_chunks,
+            ):
+                f.write(data)
+                f.flush()
+        os.rename(fname_bak, fname)
+        browser.close()
 
     
 
@@ -408,6 +419,7 @@ def main():
     fetch_parser.add_argument("-c", "--content", default=[], nargs='+', help="content")
     fetch_parser.add_argument("-l", "--lang", default=[], nargs='+', help="lang")
     fetch_parser.add_argument("-x", "--ext", default=[], nargs='+', help="ext name")
+    fetch_parser.add_argument("-H", "--headless", action='store_true', help="headless")
     fetch_parser.set_defaults(func=fetch)
 
     dedup_parser = subparsers.add_parser("dedup", help="dedup file")
