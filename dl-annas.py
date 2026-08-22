@@ -206,9 +206,11 @@ def fetch(args):
                 f'{qry_ext}{qry_cont}{qry_lang}'
             )
             print(url)
-            html = plrt_get_html(page, url, '.header-inner-top')
-            rt = pq(html)
-            el_links = rt.find('a.text-lg[href^="/md5/"]')
+            for _ in range(args.retry):
+                html = plrt_get_html(page, url, '.header-inner-top')
+                rt = pq(html)
+                el_links = rt.find('a.text-lg[href^="/md5/"]')
+                if el_links: break
             if not el_links: break
             for el in el_links:
                 el = pq(el)
@@ -420,6 +422,7 @@ def main():
     fetch_parser.add_argument("-l", "--lang", default=[], nargs='+', help="lang")
     fetch_parser.add_argument("-x", "--ext", default=[], nargs='+', help="ext name")
     fetch_parser.add_argument("-H", "--headless", action='store_true', help="headless")
+    fetch_parser.add_argument("-R", "--retry", type=int, default=10, help="retry")
     fetch_parser.set_defaults(func=fetch)
 
     dedup_parser = subparsers.add_parser("dedup", help="dedup file")
