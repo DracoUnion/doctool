@@ -13,6 +13,7 @@ import bencode
 import copy
 import subprocess as subp
 from pyquery import PyQuery as pq
+import random
 from urllib.parse import quote_plus
 from playwright.sync_api import sync_playwright
 
@@ -103,14 +104,14 @@ dft_hdr = {
     'Referer': f'https://{HOST}',
 }
 
-def plrt_get_html(url: str, el_chk: str = None) -> str:
+def plrt_get_html(url: str, el_chk: str = None, headless=True) -> str:
     """
     使用 Playwright 启动浏览器，访问页面，等待验证通过后获取 Cookies。
     """
     with sync_playwright() as p:
         # 1. 启动浏览器（推荐使用有头模式，无头模式可能被检测）
         browser = p.chromium.launch(
-            headless=True,
+            headless=headless,
             args=[
                 # 禁用AutomationControlled自动化标记（Chrome94+核心参数）
                 "--disable-blink-features=AutomationControlled", 
@@ -261,7 +262,7 @@ def download_slow(args):
     hash_ = args.hash
     url = f'https://{HOST}/md5/{hash_}'
     # html = request_retry('GET', url).text
-    html = plrt_get_html(url, '.text-gray-800')
+    html = plrt_get_html(url, '.text-gray-800', args.headless)
     rt = pq(html)
     title = fname_escape(rt.find('div.font-semibold:nth-child(4)').text().strip().replace(' 🔍', ''))
     ext = rt.find('.text-gray-800').text().split(' · ')[1].lower()
@@ -272,8 +273,9 @@ def download_slow(args):
         return
     print(f'fname: {fname}')
 
-    url = f'https://{HOST}/slow_download/{hash_}/0/4'
-    html = plrt_get_html(url, '.bg-gray-200')
+    idx = random.choice([4,5,6,7])
+    url = f'https://{HOST}/slow_download/{hash_}/0/{idx}'
+    html = plrt_get_html(url, '.bg-gray-200', args.headless)
     rt = pq(html)
     link = rt.find('.bg-gray-200').text().strip()
     with lock:
@@ -372,6 +374,7 @@ def main():
 
     dl_slow_parser = subparsers.add_parser("dl-slow", help="download file")
     dl_slow_parser.add_argument("hash", help="file hash")
+    dl_slow_parser.add_argument("-H", "--headless", action='store_true', help="headless")
     dl_slow_parser.set_defaults(func=download_slow)
 
 
@@ -384,6 +387,7 @@ def main():
     batch_parser.add_argument("-t", "--threads", type=int, default=8, help="threads num")
     batch_parser.add_argument("-s", "--site", default='annas', choices=['slow', 'bt', 'lgli'],  help="site")
     batch_parser.add_argument("-st", "--start", type=int, default=0,  help="start")
+    batch_parser.add_argument("-H", "--headless", action='store_true', help="headless")
     batch_parser.set_defaults(func=batch)
 
 
