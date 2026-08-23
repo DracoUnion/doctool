@@ -136,7 +136,7 @@ def plrt_get_html(page, url: str, el_chk: str = None) -> str:
     """  
     # 2. 访问目标网站，等待网络空闲，让验证有机会完成
     page.goto(url)
-    page.wait_for_load_state("networkidle")
+    page.wait_for_load_state("domcontentloaded")
     
     # 3. 尝试等待关键的 el_chk ，最多等待 20 秒
     #    这比单纯等待timeout更智能
@@ -149,6 +149,7 @@ def plrt_get_html(page, url: str, el_chk: str = None) -> str:
 def plrt_get_html_retry(page, url: str, el_chk: str = None, retry: int = 10) -> str:
     for i in range(retry):
         try:
+            page.reload()
             return plrt_get_html(page, url, el_chk)
         except KeyboardInterrupt:
             raise
