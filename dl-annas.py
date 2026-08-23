@@ -446,6 +446,7 @@ def main():
 
     dedup_parser = subparsers.add_parser("dedup", help="dedup file")
     dedup_parser.add_argument("flist", help="JSONL list file")
+    dedup_parser.add_argument("-s", "--sim", type=float, default=0.8, help="similarity")
     dedup_parser.set_defaults(func=dedup)
 
 
