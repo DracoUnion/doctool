@@ -129,6 +129,7 @@ def plrt_new_browser(plrt, headless=True):
         ],
     )
 
+
 def plrt_get_html(page, url: str, el_chk: str = None) -> str:
     """
     使用 Playwright 启动浏览器，访问页面，等待验证通过后获取 Cookies。
@@ -144,6 +145,17 @@ def plrt_get_html(page, url: str, el_chk: str = None) -> str:
     # 4. 获取HTML并关闭浏览器
     html = page.content()
     return html
+
+def plrt_get_html_retry(page, url: str, el_chk: str = None, retry: int = 10) -> str:
+    for i in range(retry):
+        try:
+            return plrt_get_html(page, url, el_chk)
+        except KeyboardInterrupt:
+            raise
+        except Exception:
+            print(f'plrt_get_html retry #{i + 1}')
+            traceback.print_exc()
+            if i == retry - 1: raise
 
 def get_bt_idx(bt_data, fname):
     bt = bencode.bdecode(bt_data)
@@ -206,11 +218,9 @@ def fetch(args):
                 f'{qry_ext}{qry_cont}{qry_lang}'
             )
             print(url)
-            for _ in range(args.retry):
-                html = plrt_get_html(page, url, '.header-inner-top')
-                rt = pq(html)
-                el_links = rt.find('a.text-lg[href^="/md5/"]')
-                if el_links: break
+            html = plrt_get_html_retry(page, url, '.header-inner-top')
+            rt = pq(html)
+            el_links = rt.find('a.text-lg[href^="/md5/"]')
             if not el_links: break
             for el in el_links:
                 el = pq(el)
@@ -275,7 +285,7 @@ def download_slow(args):
         hash_ = args.hash
         url = f'https://{HOST}/md5/{hash_}'
         # html = request_retry('GET', url).text
-        html = plrt_get_html(page, url, '.text-gray-800')
+        html = plrt_get_html_retry(page, url, '.text-gray-800')
         rt = pq(html)
         title = rt.find('div.font-semibold:nth-child(4)') \
             .text().strip().replace(' 🔍', '')
@@ -297,7 +307,7 @@ def download_slow(args):
         url = pq(random.choice(el_links_li)).children('a').attr('href')
         url = f'https://{HOST}{url}'
         # url = f'https://{HOST}/slow_download/{hash_}/0/{idx}'
-        html = plrt_get_html(page, url, '.bg-gray-200')
+        html = plrt_get_html_retry(page, url, '.bg-gray-200')
         rt = pq(html)
         link = rt.find('.bg-gray-200').text().strip()
         r = request_retry('GET', link, headers=dft_hdr, stream=True)
