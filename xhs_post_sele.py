@@ -115,18 +115,18 @@ def xhs_post(context, page, un, pw, title, body, retry=20):
     print('填写标题')
     page.locator(config['newBtn']).first.click()
     page.wait_for_selector(config['titleText'])
-    page.evaluate("""(sel, val) => {
+    page.evaluate("""([sel, val]) => {
         const el = document.querySelector(sel)
         el.value = val
         el.dispatchEvent(new Event('input', {bubbles: true}))
-    }""", config['titleText'], title[:100])
+    }""", [config['titleText'], title[:100]])
 
     print('填写内容')
 
     html = md2html_pandoc(body)
     page.evaluate(
-        "(sel, html) => { document.querySelector(sel).innerHTML = html }",
-        config['contText'], html,
+        "([sel, html]) => { document.querySelector(sel).innerHTML = html }",
+        [config['contText'], html],
     )
     print('下一步')
     page.locator(config['nextBtn']).first.click()
@@ -152,8 +152,8 @@ def xhs_post(context, page, un, pw, title, body, retry=20):
     page.wait_for_selector(config['pubBtn2'])
     html = txt2html(body[:500])
     page.evaluate(
-        "(sel, html) => { document.querySelector(sel).innerHTML = html }",
-        config['contText'], html,
+        "([sel, html]) => { document.querySelector(sel).innerHTML = html }",
+        [config['contText'], html],
     )
     page.wait_for_timeout(1000)
 
