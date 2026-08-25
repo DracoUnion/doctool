@@ -62,11 +62,11 @@ def normalise_cookies(cookies):
 def zhihu_post_retry(args, title, fname, col_idx):
     for i in range(args.retry):
         try:
-            with camou_create_driver() as (browser, _, page):
+            with camou_create_driver(args.headless) as (browser, context, page):
                 page.set_default_timeout(config['timeout'] * 1000)
                 page.set_default_navigation_timeout(config['timeout'] * 1000)
                 zhihu_post(
-                    browser, page, args.un, args.pw,
+                    context, page, args.un, args.pw,
                     title, fname, col_idx,
                     args.retry,
                 )
@@ -75,13 +75,13 @@ def zhihu_post_retry(args, title, fname, col_idx):
             print(f'CSDN Post Retry #{i}: {ex}')
 
 
-def zhihu_post(browser, page, un, pw, title, fname, col_idx, retry=20):
+def zhihu_post(context, page, un, pw, title, fname, col_idx, retry=20):
     # 登录
     if path.isfile(config['cookie_fname']):
         print('导入Cookie')
         page.goto('https://zhihu.com')
         cookies = json.loads(open(config['cookie_fname'], encoding='utf8').read())
-        browser.add_cookies(normalise_cookies(cookies))
+        context.add_cookies(normalise_cookies(cookies))
     print('打开登录页面')
     page.goto('https://www.zhihu.com/signin')
     print('等待页面加载')
@@ -101,7 +101,7 @@ def zhihu_post(browser, page, un, pw, title, fname, col_idx, retry=20):
             timeout=60000,
         )
         print('保存 COOKIE')
-        cookies = browser.cookies()
+        cookies = context.cookies()
         open(config['cookie_fname'], 'w', encoding='utf8').write(
             json.dumps(normalise_cookies(cookies))
         )
