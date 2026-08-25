@@ -34,8 +34,7 @@ config = {
     'cateCloseBtn': '.tag__options-content button[title=关闭]',
     'pubBtn': '.modal__button-bar button:last-of-type',
     'multiPlatRadio': '#multiPlatformPublishNo',
-    'impWait': 5,
-    'condWait': 15,
+    'timeout': 15,
     'cookie_fname': 'csdn_cookie.json',
 }
 
@@ -53,23 +52,10 @@ def _clean_cookie(raw):
         out.pop('sameSite', None)
     return out
 
-
-def get_camou_opts(headless=True):
-    return {
-        "headless": headless,
-        "humanize": True,
-        "locale": "en-US",
-        "os": ("windows",),
-        "exclude_addons": [DefaultAddons.UBO],
-    }
-
-
-
 def csdn_post_retry(args, title, body):
-    with Camoufox(**get_camou_opts(args.headless)) as browser:
-        context = browser.new_context()
-        page = context.new_page()
-        page.set_default_timeout(config['condWait'] * 1000)
+    with camou_create_driver(args.headless) as (browser, context, page):
+        page.set_default_timeout(config['timeout'] * 1000)
+        page.set_default_navigation_timeout(config['timeout'] * 1000)
         for i in range(args.retry):
             try:
                 csdn_post(
@@ -185,7 +171,7 @@ def csdn_post(context, page, un, pw, title, body, cate='默认分类', tags=[], 
             print('等待成功页面')
             page.wait_for_function(
                 '() => location.href.includes("/success/")',
-                timeout=config['condWait'] * 1000
+                timeout=config['timeout'] * 1000
             )
             print('发布成功')
             break

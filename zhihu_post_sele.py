@@ -2,15 +2,10 @@ import traceback
 import argparse
 from os import path
 import time
-import os 
+import os
 import json
 import re
-from selenium.webdriver import Chrome
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support.wait import WebDriverWait
-import selenium.webdriver.support.expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
+from camoufox.sync_api import Camoufox
 from BookerDownloadTool.util import *
 from BookerMarkdownTool.util import get_md_title
 
@@ -35,8 +30,7 @@ config = {
     'pubBtnDis': '.JmYzaky7MEPMFcJDLNMG[disabled]',
     'noticeBox': '.Notification',
     'alertBtn': '.Modal-content button',
-    'impWait': 5,
-    'condWait': 15,
+    'timeout': 15,
     'cookie_fname': 'zhihu_cookie.json',
 }
 
@@ -50,221 +44,142 @@ def md2html_pandoc(md):
     safe_remove(ofname)
     return html
 
-def create_driver(headless=False):
-    options = Options()
-    options.binary_location = r'D:\Program Files\chrome-for-testing\chrome.exe'
-    custom_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-    if headless:
-        options.add_argument('--headless')
-    options.add_argument('--disable-gpu')
-    options.add_argument('--log-level=3')
-    options.add_argument(f'--user-agent={UA}')
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument(f'--user-agent={custom_user_agent}')
-    driver = webdriver.Chrome(options=options)
-    driver.set_script_timeout(1000)
-    # StealthJS
-    # stealth = open(d('stealth.min.js')).read()
-    # driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-    #     "source": stealth
-    # })
-    return driver
+def js_click(page, sel, optional=False):
+    """JS 触发点击，等价原 driver.execute_script('document.querySelector(sel).click()')"""
+    if optional:
+        page.evaluate("(sel) => { document.querySelector(sel)?.click() }", sel)
+    else:
+        page.evaluate("(sel) => { document.querySelector(sel).click() }", sel)
+
+def normalise_cookies(cookies):
+    """Playwright add_cookies 不接受 sameSite 为空，统一转成 Lax"""
+    for c in cookies:
+        if c.get('sameSite') is None:
+            c['sameSite'] = 'Lax'
+    return cookies
+
 
 def zhihu_post_retry(args, title, fname, col_idx):
     for i in range(args.retry):
         try:
-            driver = create_driver(args.headless)
-            zhihu_post(
-                driver, args.un, args.pw, 
-                title, fname, col_idx,
-                args.retry,
-            )
-            driver.close()
+            with camou_create_driver() as (browser, _, page):
+                page.set_default_timeout(config['timeout'] * 1000)
+                page.set_default_navigation_timeout(config['timeout'] * 1000)
+                zhihu_post(
+                    browser, page, args.un, args.pw,
+                    title, fname, col_idx,
+                    args.retry,
+                )
             break
         except Exception as ex:
             print(f'CSDN Post Retry #{i}: {ex}')
-            # if i == args.retry - 1:
-            #     raise ex
-                
-    
 
-def zhihu_post(driver: Chrome, un, pw, title, fname, col_idx, retry=20):
+
+def zhihu_post(browser, page, un, pw, title, fname, col_idx, retry=20):
     # 登录
     if path.isfile(config['cookie_fname']):
         print('导入Cookie')
-        driver.get('https://zhihu.com')
+        page.goto('https://zhihu.com')
         cookies = json.loads(open(config['cookie_fname'], encoding='utf8').read())
-        # for c in cookies: c['domain'] = '.csdn.net'
-        print(cookies)
-        for c in cookies: driver.add_cookie(c)
+        browser.add_cookies(normalise_cookies(cookies))
     print('打开登录页面')
-    driver.get('https://www.zhihu.com/signin')
+    page.goto('https://www.zhihu.com/signin')
     print('等待页面加载')
-    driver.implicitly_wait(config['impWait'])
+    page.wait_for_load_state('domcontentloaded')
     print('页面加载完成')
-    print('driver.current_url', driver.current_url)
-    if driver.current_url.startswith('https://www.zhihu.com/signin'):
+    print('page.url', page.url)
+    if page.url.startswith('https://www.zhihu.com/signin'):
         print('添加账号密码')
-        driver.find_element(By.CSS_SELECTOR, config['selectPwTab']).click()
-        driver.find_element(By.CSS_SELECTOR, config['unText']).send_keys(un)
-        driver.find_element(By.CSS_SELECTOR, config['pwText']).send_keys(pw)
-        # driver.find_element(By.CSS_SELECTOR, config['cosentCheck']).click()
+        js_click(page, config['selectPwTab'])
+        page.locator(config['unText']).first.fill(un)
+        page.locator(config['pwText']).first.fill(pw)
         print('登录')
-        driver.find_element(By.CSS_SELECTOR, config['loginBtn']).click()
+        js_click(page, config['loginBtn'])
         print('等待登录后跳转')
-        WebDriverWait(driver, 60).until(
-            lambda d: not d.current_url.startswith('https://www.zhihu.com/signin')
+        page.wait_for_url(
+            lambda url: not url.startswith('https://www.zhihu.com/signin'),
+            timeout=60000,
         )
         print('保存 COOKIE')
-        cookies = driver.get_cookies()
-        # for c in cookies: c['domain'] = '.csdn.net'
-        open(config['cookie_fname'], 'w', encoding='utf8').write(json.dumps(cookies))
+        cookies = browser.cookies()
+        open(config['cookie_fname'], 'w', encoding='utf8').write(
+            json.dumps(normalise_cookies(cookies))
+        )
 
-    # driver.current_url
     print('打开编辑器')
-    driver.get('https://zhuanlan.zhihu.com/write')
+    page.goto('https://zhuanlan.zhihu.com/write')
     print('等待编辑器加载')
-    driver.implicitly_wait(config['impWait'])
+    page.wait_for_load_state('domcontentloaded')
     print('编辑器加载完成')
-    print('driver.current_url', driver.current_url)
-    
-    
+    print('page.url', page.url)
+
     print('填写标题')
-    driver.find_element(By.CSS_SELECTOR, config['titleText']).send_keys(title[:100])
-    # driver.execute_script('''
-    #     var el = document.querySelector(arguments[0]) 
-    #     el.value = arguments[1]
-    #     el.dispatchEvent(new Event('input', {bubbles: true}))
-    # ''', config['titleText'], title[:100])
-    # driver.find_element(By.CSS_SELECTOR, config['bodyText']).send_keys(body)
-    
+    page.locator(config['titleText']).first.fill(title[:100])
+
     print('选择专栏')
-    # el_col = driver.find_element(By.CSS_SELECTOR, config['colRadio'])
+    # el_col = page.locator(config['colRadio']).first
     # el_col.click()
     if col_idx != 0:
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        WebDriverWait(driver, config['condWait']).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, config['colRadio']))
-        )
-        driver.execute_script('''
-            document.querySelector(arguments[0]).click()
-        ''', config['colRadio'])
-        WebDriverWait(driver, config['condWait']).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, config['colCombo']))
-        )
-        driver.execute_script('''
-            document.querySelector(arguments[0]).click()
-        ''', config['colCombo'])
+        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        page.wait_for_selector(config['colRadio'])
+        js_click(page, config['colRadio'])
+        page.wait_for_selector(config['colCombo'])
+        js_click(page, config['colCombo'])
         el =  config['colItem'].replace('{i}', str(col_idx))
-        WebDriverWait(driver, config['condWait']).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, el))
-        )
-        driver.execute_script('''
-            document.querySelector(arguments[0]).click()
-        ''', el)
-    # el_gift = driver.find_element(By.CSS_SELECTOR, config['giftRadio'])
+        page.wait_for_selector(el)
+        js_click(page, el)
+    # el_gift = page.locator(config['giftRadio']).first
     # el_gift.click()
-    
-    # driver.execute_script('''
-    #     document.querySelector(arguments[0]).click()
-    # ''', config['giftRadio'])
-    # WebDriverWait(driver, config['condWait']).until(
-    #     EC.presence_of_element_located((By.CSS_SELECTOR, config['giftBtn']))
-    # )
-    # el_gift = driver.find_element(By.CSS_SELECTOR, config['giftBtn'])
-    # el_gift.click()
-    
+
     print('声明 AI 创作')
-    WebDriverWait(driver, config['condWait']).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, config['declCombo']))
-    )
-    driver.execute_script('''
-        document.querySelector(arguments[0]).click()
-    ''', config['declCombo'])
-    WebDriverWait(driver, config['condWait']).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, config['declItem']))
-    )
-    driver.execute_script('''
-        document.querySelector(arguments[0]).click()
-    ''', config['declItem'])
+    page.wait_for_selector(config['declCombo'])
+    js_click(page, config['declCombo'])
+    page.wait_for_selector(config['declItem'])
+    js_click(page, config['declItem'])
 
     print('填写内容')
-    
-    # el_alert = driver.find_element(By.CSS_SELECTOR, config['alertBtn'])
-    # if el_alert: el_alert.click()
-    driver.execute_script('''
-        document.querySelector(arguments[0])?.click()
-    ''', config['alertBtn'])
-    # html = md2html_pandoc(body)
-    # driver.execute_script('''
-    #     document.querySelector(arguments[0]).innerHTML = arguments[1]
-    # ''', config['contText'], html)
-    
-  
-    el_doc = driver.find_element(By.CSS_SELECTOR, config['docBtn'])
-    el_doc.click()
-    WebDriverWait(driver, config['condWait']).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, config['impBtn']))
-    )
-    el_imp = driver.find_element(By.CSS_SELECTOR, config['impBtn'])
-    el_imp.click()
-    WebDriverWait(driver, config['condWait']).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, config['impFile']))
-    )
-    el_file = driver.find_element(By.CSS_SELECTOR, config['impFile'])
-    el_file.send_keys(fname)
-    WebDriverWait(driver, config['condWait']).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, config['titleText']))
-    )
-    
-    time.sleep(10)
 
-   
+    js_click(page, config['alertBtn'], optional=True)
+
+    page.locator(config['docBtn']).first.click()
+    page.locator(config['impBtn']).first.click()
+    page.locator(config['impFile']).first.set_input_files(fname)
+    page.wait_for_timeout(10000)
+
+
     for i in range(retry):
         print(f'发布：{i}')
-        WebDriverWait(driver, config['condWait']).until_not(
-            EC.presence_of_element_located((By.CSS_SELECTOR, config['pubBtnDis']))
+        page.wait_for_selector(
+            config['pubBtnDis'], state='detached'
         )
-        # driver.find_element(By.CSS_SELECTOR, config['pubBtn']).click()
-        driver.execute_script('''
-            document.querySelector(arguments[0]).click()
-        ''', config['pubBtn'])
+        js_click(page, config['pubBtn'])
         print('等待消息提示')
         try:
-            WebDriverWait(driver, config['condWait']).until(
-                lambda d: (
-                    'edit' not in d.current_url and
-                    'write' not in d.current_url
-                )
+            page.wait_for_url(
+                lambda url: (
+                    'edit' not in url and
+                    'write' not in url
+                ),
             )
             print('发布成功')
             break
         except:
             pass
-            
+
         try:
-            WebDriverWait(driver, config['condWait']).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, config['noticeBox']))
-            )
-            time.sleep(1)
-            el_notice = driver.find_element(By.CSS_SELECTOR, config['noticeBox'])
-            notice = el_notice.text
+            page.wait_for_selector(config['noticeBox'])
+            page.wait_for_timeout(1000)
+            notice = page.locator(config['noticeBox']).first.inner_text()
             print(notice)
         except Exception as ex:
             print(ex)
-        
-        # if i == retry - 1:
-        #     raise Exception('发布失败')
+
         time.sleep(1)
 
 
 def main():
-    
+
     parser = argparse.ArgumentParser(prog="GPTTestTrain", description="GPTTestTrain", formatter_class=argparse.RawDescriptionHelpFormatter)
-    # parser.add_argument("-v", "--version", action="version", version=f"BookerMarkdownTool version: {__version__}")
-    # parser.set_defaults(func=lambda x: parser.print_help())
-    # subparsers = parser.add_subparsers()
-    # train_parser = subparsers.add_parser("train", help="train GLM model")
     parser.add_argument("fname", help="MD fname")
     parser.add_argument("-u", "--un", default=os.environ.get('CSDN_USERNAME', ''), help="username")
     parser.add_argument("-p", "--pw", default=os.environ.get('CSDN_PASSWORD', ''), help="password")
@@ -286,8 +201,8 @@ def main():
     if not fnames:
         print('请提供 MD 文件或目录')
         return
-    
-    # driver.maximize_window()
+
+    # page.maximize_window()  # Camoufox 窗口大小由 screen 参数控制
     for f in fnames:
         print(f)
         md = open(f, encoding='utf8').read()
@@ -304,8 +219,8 @@ def main():
         os.remove(f)
 
 
-    
-if __name__ == '__main__': 
+
+if __name__ == '__main__':
     try:
         main()
     except:
