@@ -39,28 +39,15 @@ config = {
 }
 
 
-def _clean_cookie(raw):
-    """把 Selenium/JSON 格式的 cookie 转成 Playwright 可接受的格式。"""
-    key_map = {'expiry': 'expires'}
-    out = {'path': '/'}
-    valid_keys = {'name', 'value', 'domain', 'path', 'expires', 'httpOnly', 'secure', 'sameSite'}
-    for k, v in raw.items():
-        key = key_map.get(k, k)
-        if key in valid_keys:
-            out[key] = v
-    if out.get('sameSite') not in ('Strict', 'Lax', 'None'):
-        out.pop('sameSite', None)
-    return out
-
 def csdn_post_retry(args, title, body):
     with camou_create_driver(args.headless) as (browser, context, page):
         page.set_default_timeout(config['timeout'] * 1000)
         page.set_default_navigation_timeout(config['timeout'] * 1000)
+        set_driver_cookie(context, args.cookie, 'csdn.net', secure=True)
         for i in range(args.retry):
             try:
                 csdn_post(
                     context, page,
-                    args.un, args.pw,
                     title, body,
                     args.cate, args.tags.split(','),
                     args.retry
@@ -72,14 +59,10 @@ def csdn_post_retry(args, title, body):
                     raise ex
 
 
-def csdn_post(context, page, un, pw, title, body, cate='默认分类', tags=[], retry=20):
+def csdn_post(context, page, title, body, cate='默认分类', tags=[], retry=20):
     # 登录
     if path.isfile(config['cookie_fname']):
-        print('导入Cookie')
-        page.goto('https://csdn.net')
         cookies = json.loads(open(config['cookie_fname'], encoding='utf8').read())
-        cookies = [_clean_cookie(c) for c in cookies]
-        print(cookies)
         context.add_cookies(cookies)
 
     print('打开登录页面')
@@ -89,21 +72,13 @@ def csdn_post(context, page, un, pw, title, body, cate='默认分类', tags=[], 
     print('页面加载完成')
     print('page.url', page.url)
     if page.url.startswith('https://passport.csdn.net'):
-        print('添加账号密码')
-        page.locator(config['selectPwTab']).click()
-        page.locator(config['unBtn']).fill(un)
-        page.locator(config['pwBtn']).fill(pw)
-        print('登录')
-        page.locator(config['loginBtn']).click()
-        print('等待登录后跳转')
-        page.wait_for_function(
-            '() => !location.href.startsWith("https://passport.csdn.net")',
-            timeout=60000
+        print('需要登录，请关闭无头模式')
+        page.wait_for_url(
+            lambda url: not url.startswith('https://passport.csdn.net'),
+            timeout = 60_000,
         )
-        print('保存 COOKIE')
-        cookies = context.cookies()
-        open(config['cookie_fname'], 'w', encoding='utf8').write(json.dumps(cookies))
-
+        open(config['cookie_fname'], 'w', encoding='utf8') \
+            .write(json.dumps(context.cookies()))
     print('打开编辑器')
     page.goto('https://editor.csdn.net/md/')
     print('等待编辑器加载')
@@ -184,10 +159,9 @@ def csdn_post(context, page, un, pw, title, body, cate='默认分类', tags=[], 
 def main():
     parser = argparse.ArgumentParser(prog="GPTTestTrain", description="GPTTestTrain", formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("fname", help="MD fname")
-    parser.add_argument("-u", "--un", default=os.environ.get('CSDN_USERNAME', ''), help="username")
-    parser.add_argument("-p", "--pw", default=os.environ.get('CSDN_PASSWORD', ''), help="password")
-    parser.add_argument("-c", "--cate", default='默认分类', help="cate")
-    parser.add_argument("-t", "--tags", default='默认标签', help="tags")
+    parser.add_argument("-c", "--cookie", default='', help="cookie")
+    parser.add_argument("-ct", "--cate", default='默认分类', help="cate")
+    parser.add_argument("-tg", "--tags", default='默认标签', help="tags")
     parser.add_argument("-r", "--retry", type=int, default=20, help="retry")
     parser.add_argument("-H", "--headless", action='store_true', help="hdls")
     args = parser.parse_args()
