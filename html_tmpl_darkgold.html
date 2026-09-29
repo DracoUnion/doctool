@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>幻灯片版 Markdown 模板 (宽敞片头)</title>
+    <style>
+        /* ==========================================================================
+           全局变量定义 (保留原图深空蓝与棕金风格)
+           ========================================================================== */
+        :root {
+            --bg-color: #06080e;
+            --bg-accent: #111823;
+            --bg-inline-code: #1a2232;
+            --text-primary: #e6edf3;
+            --text-secondary: #8b949e;
+            --text-title: #ffffff;
+            --text-subtitle: #9ba4b5;
+            --accent-color: #c69c6d;
+            --border-color: #30363d;
+            --code-font: Consolas, Monaco, "Andale Mono", "Ubuntu Mono", monospace;
+            --main-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+        }
+
+        /* ==========================================================================
+           全局重置与幻灯片容器 (保持不变)
+           ========================================================================== */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            background: radial-gradient(circle at 50% 50%, var(--bg-accent) 0%, var(--bg-color) 90%);
+            background-attachment: fixed;
+            color: var(--text-primary);
+            font-family: var(--main-font);
+            font-size: clamp(16px, 1.2vw, 22px);
+            line-height: 1.6;
+            word-wrap: break-word;
+            -webkit-font-smoothing: antialiased;
+            overflow-x: hidden;
+            overflow-y: auto;
+        }
+
+        .markdown-body {
+            max-width: 1300px;
+            width: 92%;
+            margin: 0 auto;
+            padding: 30px 0 50px;
+        }
+
+        /* ==========================================================================
+           1. 标题 (Headings) - 保持紧凑
+           ========================================================================== */
+        .markdown-body h1,
+        .markdown-body h2,
+        .markdown-body h3,
+        .markdown-body h4,
+        .markdown-body h5,
+        .markdown-body h6 {
+            color: var(--text-title);
+            font-weight: 700;
+            margin-top: 1em;
+            margin-bottom: 0.4em;
+            line-height: 1.25;
+        }
+
+        .markdown-body h1 {
+            font-size: clamp(2em, 3vw, 3em);
+            letter-spacing: 1px;
+            padding-bottom: 0.2em;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .markdown-body h2 {
+            font-size: clamp(1.5em, 2vw, 2em);
+            letter-spacing: 0.5px;
+            padding-bottom: 0.2em;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .markdown-body h3 { font-size: clamp(1.2em, 1.5vw, 1.5em); }
+        .markdown-body h4 { font-size: clamp(1.05em, 1.2vw, 1.2em); }
+        .markdown-body h5,
+        .markdown-body h6 { font-size: 1em; color: var(--text-secondary); }
+
+        .markdown-body h2::before {
+            content: "";
+            display: inline-block;
+            width: 4px;
+            height: 0.85em;
+            background-color: var(--accent-color);
+            margin-right: 10px;
+            vertical-align: baseline;
+            border-radius: 2px;
+        }
+
+        /* ==========================================================================
+           2. 段落、列表、引用、代码、表格 (保持紧凑)
+           ========================================================================== */
+        .markdown-body p { margin-bottom: 0.8em; }
+        .markdown-body strong { font-weight: 700; color: var(--text-title); }
+        .markdown-body em { font-style: italic; color: var(--accent-color); }
+
+        .markdown-body a {
+            color: var(--accent-color);
+            text-decoration: none;
+            border-bottom: 1px dashed var(--accent-color);
+            transition: all 0.3s ease;
+        }
+        .markdown-body a:hover {
+            color: #e2b98e;
+            border-bottom: 1px solid #e2b98e;
+        }
+
+        .markdown-body ul,
+        .markdown-body ol {
+            padding-left: 1.5em;
+            margin-bottom: 0.8em;
+        }
+        .markdown-body li { margin-bottom: 0.2em; }
+        .markdown-body li > p { margin-bottom: 0.4em; }
+
+        .markdown-body blockquote {
+            padding: 8px 16px;
+            margin: 0.8em 0;
+            color: var(--text-secondary);
+            background-color: rgba(198, 156, 109, 0.05);
+            border-left: 4px solid var(--accent-color);
+            border-radius: 0 4px 4px 0;
+        }
+
+        .markdown-body code {
+            font-family: var(--code-font);
+            font-size: 0.85em;
+            padding: 0.15em 0.3em;
+            background-color: var(--bg-inline-code);
+            color: #f0f6fc;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+        }
+
+        .markdown-body pre {
+            margin: 0.8em 0;
+            padding: 12px 16px;
+            overflow: auto;
+            font-size: 0.85em;
+            line-height: 1.4;
+            background-color: var(--bg-accent);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+        }
+
+        .markdown-body pre code {
+            display: inline;
+            max-width: auto;
+            padding: 0;
+            margin: 0;
+            overflow: visible;
+            background-color: transparent;
+            border: 0;
+        }
+
+        .markdown-body table {
+            display: block;
+            width: 100%;
+            width: max-content;
+            max-width: 100%;
+            overflow: auto;
+            border-spacing: 0;
+            border-collapse: collapse;
+            margin: 0.8em 0;
+            font-size: 0.9em;
+        }
+
+        .markdown-body table th,
+        .markdown-body table td {
+            padding: 6px 12px;
+            border: 1px solid var(--border-color);
+        }
+
+        .markdown-body table th {
+            font-weight: 600;
+            color: var(--text-title);
+            background-color: var(--bg-accent);
+            text-align: left;
+        }
+
+        .markdown-body table tr:nth-child(2n) {
+            background-color: rgba(255, 255, 255, 0.02);
+        }
+
+        .markdown-body hr {
+            height: 1px;
+            margin: 1.2em 0;
+            background-color: var(--border-color);
+            border: 0;
+        }
+
+        /* ==========================================================================
+           9. 片头区域 (Cover Header) - 根据要求：恢复第一版的宽敞感与字号
+           ========================================================================== */
+        .cover-header {
+            position: relative;
+            margin-bottom: 50px;  /* 恢复原本的 50px */
+            padding-bottom: 30px; /* 恢复原本的 30px */
+            border-bottom: none;
+        }
+
+        .cover-header .tag {
+            position: absolute;
+            top: 0;
+            right: 0;
+            padding: 4px 12px;       /* 增大内边距 */
+            font-size: 0.9em;        /* 增大字号 */
+            color: var(--accent-color);
+            border: 1px solid rgba(198, 156, 109, 0.4);
+            border-radius: 2px;
+            letter-spacing: 1px;
+        }
+
+        .cover-header h3 {
+            color: var(--accent-color);
+            font-size: 24px;        /* 增大字号 */
+            font-weight: 500;
+            letter-spacing: 2px;
+            margin-bottom: 20px;     /* 增大间距 */
+            text-transform: uppercase;
+        }
+		
+		.cover-header h2::before {
+			display: none;
+		}
+		
+		.cover-header h2 {
+		    color: var(--text-subtitle);
+            font-size: 40px;
+            font-weight: 300;
+            letter-spacing: 1.5px;
+            margin-bottom: 45px;
+            margin-top: 45px;
+			border-bottom: none;
+		}
+
+        .cover-header h1 {
+            color: var(--text-title);
+            font-size: 64px;
+            font-weight: 800;
+            letter-spacing: 2px;
+            margin-bottom: 25px;
+            line-height: 1.2;
+            /* 添加轻微的文本阴影提升立体感 */
+            text-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+			border-bottom: none;
+        }
+
+        .cover-header p {
+            color: var(--text-secondary);
+            font-size: 20px;          /* 增大字号 */
+        }
+
+        /* 响应式调整：在较窄屏幕（如平板竖屏）兜底 */
+        @media (max-width: 768px) {
+            .markdown-body { width: 95%; padding: 20px 0; }
+            .cover-header .tag { position: relative; display: inline-block; margin-bottom: 15px; }
+            .cover-header .title { font-size: 2.2em; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 模拟 Markdown 渲染后的容器 -->
+    <article class="markdown-body">
+        
+        <!-- 宽敞的片头区域 -->
+        <header class="cover-header">
+            <h3 class="subtitle">UC BERKELEY · 2019 秋季 · 软件工程</h3>
+            <h1 class="title">伯克利 CS169 软件工程</h1>
+            <h2 class="subtitle-2">Software as a Service · 敏捷开发 × Rails 实展</h2>
+            <p class="details">主讲 Michael Ball · 全 22 讲 · 中英双语字幕 · UC Berkeley CS169 Fall 2019</p>
+        </header>
+
+        <!-- Markdown 内容演示（保持幻灯片紧凑排版） -->
+        <h2>1. 关于这门课程</h2>
+        <p>这是一门关于 <strong>软件工程</strong> 的进阶课程，主要探讨 <em>Software as a Service (SaaS)</em> 的架构设计与敏捷开发实践。通过本课程，您将学习到如何构建现代化的云端应用。</p>
+        
+        <blockquote>
+            <p>“敏捷开发不是一种方法论，而是一种思维方式。它强调快速迭代、持续交付和客户反馈。”</p>
+        </blockquote>
+
+        <h3>1.1 核心知识点</h3>
+        <ul>
+            <li><strong>MVC 架构</strong>：模型、视图与控制器的分离。</li>
+            <li><strong>RESTful API</strong>：设计无状态、可扩展的网络服务。</li>
+            <li><strong>BDD/TDD</strong>：行为驱动开发与测试驱动开发。
+                <ul>
+                    <li>RSpec 单元测试</li>
+                    <li>Cucumber 集成测试</li>
+                </ul>
+            </li>
+        </ul>
+
+        <h2>2. 代码示例</h2>
+        <p>在 Rails 中，我们可以使用内联代码如 <code>belongs_to :user</code> 来建立关联。下面是一个完整的控制器示例：</p>
+
+        <pre><code>class ArticlesController &lt; ApplicationController
+  def index
+    @articles = Article.all
+  end
+
+  def create
+    @article = Article.new(article_params)
+    if @article.save
+      redirect_to @article
+    else
+      render 'new'
+    end
+  end
+end</code></pre>
+
+        <h3>2.1 环境依赖表</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>工具</th>
+                    <th>版本</th>
+                    <th>说明</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Ruby</td>
+                    <td>&gt;= 2.7.0</td>
+                    <td>核心编程语言</td>
+                </tr>
+                <tr>
+                    <td>Rails</td>
+                    <td>&gt;= 6.0.0</td>
+                    <td>Web 应用框架</td>
+                </tr>
+                <tr>
+                    <td>PostgreSQL</td>
+                    <td>&gt;= 12.0</td>
+                    <td>关系型数据库</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <hr>
+
+        <p>更多信息，请访问 <a href="#">官方课程主页</a> 获取课件与项目源码。</p>
+
+    </article>
+
+</body>
+</html>
