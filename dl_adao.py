@@ -148,24 +148,6 @@ def extract_replies(soup, page):
     return replies
 
 
-class _Pacer:
-    """全局节流：保证任意时刻至多每 interval 秒发起一次网络请求。"""
-
-    def __init__(self, interval):
-        self._lock = threading.Lock()
-        self._interval = interval
-        self._next = 0.0
-
-    def wait(self):
-        with self._lock:
-            now = time.monotonic()
-            target = self._next if self._next > now else now
-            self._next = target + self._interval
-        delay = target - now
-        if delay > 0:
-            time.sleep(delay)
-
-
 def download_topic(tid, max_pages=None, sleep=1.0, single_page=None, threads=1):
     # session = requests.Session()
     root = fetch_page(tid, 1)
@@ -173,13 +155,11 @@ def download_topic(tid, max_pages=None, sleep=1.0, single_page=None, threads=1):
     total_pages = get_total_pages(root)
     if max_pages and max_pages < total_pages:
         total_pages = max_pages
-    if single_page:
-        total_pages = single_page  # 仅调试用：抓单页
 
     topic = extract_topic(root)
     replies = []
 
-    pages = [p for p in range(1, total_pages + 1) if not (single_page and p != single_page)]
+    pages = [p for p in range(1, total_pages + 1)]
 
     # 多线程：并发抓各页，按页码顺序汇总结果
     def _tr_fetch_page(page):
@@ -239,47 +219,6 @@ def fetch_list_tids(fid, page):
     return tids
 
 
-class _TidScanner:
-    """多线程递增页码抓取 TID，直到遇到空页。
-
-    列表没有总页数，故用线程池并发抓取递增的页码；某页为空即认为
-    之后所有页都为空（列表页逐页递减是单调的），据此终止并发。
-    """
-
-    def __init__(self, fid, max_threads=4, max_list_pages=None):
-        self._fid = fid
-        self._max = max_list_pages
-        self._lock = threading.Lock()
-        self._next = 1          # 下一个要抓的页码
-        self._stop = None       # 已知空页的最小页码（>= stop 的页都为空）
-        self._queue = queue.Queue()  # (page, tids)
-
-    def next_page(self):
-        """取下一个要抓的页码；没有则返回 None（worker 退出）。"""
-        with self._lock:
-            if self._stop is not None and self._next >= self._stop:
-                return None
-            if self._max is not None and self._next > self._max:
-                return None
-            page = self._next
-            self._next += 1
-            return page
-
-    def submit(self, page, tids):
-        with self._lock:
-            if not tids and (self._stop is None or page < self._stop):
-                self._stop = page
-        self._queue.put((page, tids))
-
-    def ordered_pages(self):
-        """按页码升序返回 (page, tids)，丢弃 >= stop 的空页及越界页。"""
-        items = []
-        while not self._queue.empty():
-            items.append(self._queue.get())
-        items.sort(key=lambda x: x[0])
-        stop = self._stop or (items[-1][0] + 1 if items else 1)
-        return [(p, t) for p, t in items if p < stop]
-
 
 def _scan_worker(fid, scanner):
     """单个 worker：循环取页码抓 TID，直到没有可抓的页。"""
@@ -287,38 +226,33 @@ def _scan_worker(fid, scanner):
         page = scanner.next_page()
         if page is None:
             return
+        print(f'获取 TID：FID={fid}，P={page}')
         tids = fetch_list_tids(fid, page)
+        print(tids)
         scanner.submit(page, tids)
-
-
-def _save_topic(tid, sleep=1.0, max_pages=None, single_page=None):
-    """下载单个帖子并保存；输出已存在则跳过（支持断点续抓）。"""
-    out = f"adao-{tid}.json"
-    if path.isfile(out):
-        print(f"skip {out} (exists)", file=sys.stderr)
-        return
-    data = download_topic(tid, max_pages=max_pages, sleep=sleep, single_page=single_page)
-    with open(out, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    print(f"saved {len(data['replies'])} replies -> {out}", file=sys.stderr)
-
 
 def batch_download(fid, max_threads=4, max_list_pages=None, sleep=1.0, max_pages=None):
     """先并发抓取板块所有页的 TID，再按页逐一调用 download 逻辑下载每个帖子。"""
-    scanner = _TidScanner(fid, max_threads, max_list_pages)
-    with ThreadPoolExecutor(max_threads) as pool:
-        for _ in range(max_threads):
-            pool.submit(_scan_worker, fid, scanner)
 
-    pages = scanner.ordered_pages()
-    tids = [t for _, ts in pages for t in ts]
-    print(f"[batch] {fid}: {len(pages)} list pages, {len(tids)} topics", file=sys.stderr)
 
     done = 0
-    for page, page_tids in pages:
-        print(f"[batch] downloading list page {page}: {len(page_tids)} topics", file=sys.stderr)
-        for tid in page_tids:
-            _save_topic(tid, sleep=sleep, max_pages=max_pages)
+    page = 1
+    while True:
+        print(f"[batch] downloading list page {page}", file=sys.stderr)
+        print(f'抓取 TID：FID={fid}, P={page}')
+        tids = fetch_list_tids(fid, page)
+        print(tids)
+        if not tids: break
+        for tid in tids:
+            out = f"adao-{tid}.json"
+            if path.isfile(out):
+                print(f"skip {out} (exists)", file=sys.stderr)
+                return
+            data = download_topic(tid, max_pages=max_pages, sleep=sleep, single_page=None)
+            with open(out, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            print(f"saved {len(data['replies'])} replies -> {out}", file=sys.stderr)
+
             done += 1
     print(f"[batch] finished: {done} topics processed", file=sys.stderr)
     return done
