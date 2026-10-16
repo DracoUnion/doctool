@@ -247,13 +247,14 @@ def batch_download(fid, max_threads=4, max_list_pages=None, sleep=1.0, max_pages
             out = f"adao-{tid}.json"
             if path.isfile(out):
                 print(f"skip {out} (exists)", file=sys.stderr)
-                return
+                continue
             data = download_topic(tid, max_pages=max_pages, sleep=sleep, single_page=None)
             with open(out, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             print(f"saved {len(data['replies'])} replies -> {out}", file=sys.stderr)
 
             done += 1
+        page += 1
     print(f"[batch] finished: {done} topics processed", file=sys.stderr)
     return done
 
