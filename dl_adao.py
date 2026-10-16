@@ -189,7 +189,7 @@ def download_topic(tid, max_pages=None, sleep=1.0, single_page=None, threads=1):
         time.sleep(sleep)
         return page_replies
 
-    with ThreadPoolExecutor(max_workers=threads) as pool:
+    with ThreadPoolExecutor(threads) as pool:
         futures = {p: pool.submit(_tr_fetch_page, p) for p in pages}
     for page in pages:
         page_replies = futures[page].result()
@@ -306,7 +306,7 @@ def _save_topic(tid, sleep=1.0, max_pages=None, single_page=None):
 def batch_download(fid, max_threads=4, max_list_pages=None, sleep=1.0, max_pages=None):
     """先并发抓取板块所有页的 TID，再按页逐一调用 download 逻辑下载每个帖子。"""
     scanner = _TidScanner(fid, max_threads, max_list_pages)
-    with ThreadPoolExecutor(max_threads=max_threads) as pool:
+    with ThreadPoolExecutor(max_threads) as pool:
         for _ in range(max_threads):
             pool.submit(_scan_worker, fid, scanner)
 
