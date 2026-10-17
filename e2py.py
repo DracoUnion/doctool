@@ -22,6 +22,7 @@
 import re
 import os
 import sys
+import time
 import argparse
 import logging
 from os import path
@@ -34,6 +35,7 @@ sys.path.insert(0, _BGT_ROOT)
 from BookerGptTool.openai import (  # noqa: E402
     set_openai_props,
     ask_chatgpt_retry,
+    NO_THINK_EXTRA_BODY,
 )
 from BookerGptTool.util import (  # noqa: E402
     render_prompt,
@@ -48,7 +50,7 @@ logging.basicConfig(
     format='[%(asctime)s][%(name)s][%(levelname)s] %(message)s')
 logger = logging.getLogger('e2py')
 
-DEFAULT_EXTS = 'e,ec,epr,ecode'
+DEFAULT_EXTS = 'e,ec,epr,ecode,txt,xml'
 
 # --------------------------------------------------------------------------
 # 提示词
@@ -76,9 +78,21 @@ CONVERT_PMT = '''
   如果(条件)/否则/结束如果 -> if/else；
   判断开始/判断(值)/分支/结束判断 -> if/elif/else 或 match；
   返回(x) -> return x；跳出循环 -> break；到循环尾 -> continue。
-- GUI 控件(窗口/按钮/编辑框/标签等)无法精确保留时，
-  把表单/事件结构整理成清晰的 Python 函数与注释，说明原控件与事件名称，
-  不要臆造复杂窗口代码。
+- GUI 控件(窗口/按钮/编辑框/标签/组合框等)一律用 PyQt6 实现：
+  窗口 -> QMainWindow / QWidget，按钮 -> QPushButton，编辑框 -> QLineEdit /
+  QTextEdit，标签 -> QLabel，组合框 -> QComboBox，分组框 -> QGroupBox，
+  时钟 -> QTimer；控件事件 -> 对应信号槽(如 clicked、currentTextChanged)。
+  无法逐一对号入座时保留控件与事件语义，用 PyQt6 近似实现，必要处加注释说明
+  原控件名。
+- 反编译特征名(来自 e-packager 等工具)：形如 控件._LibXType13MemY 的成员访问
+  表示取该控件的内容/当前文本（如 组合框1._Lib0Type13Mem9 即组合框当前选中项
+  文本），用对应 PyQt6 API(如 QComboBox.currentText())替代，并在注释中标注原名称；
+  #_LibXConstY / 其它 #常量 是常量引用，按语义替换为实际值或命名常量。
+- 外部模块/支持库类(如 内存_驱动读写1类)的 读整数型(进程, 地址) / 写整数型
+  (进程, 地址, 值) 表示对目标进程内存的读写，用 ctypes(ReadProcessMemory/
+  WriteProcessMemory)或自定义辅助函数近似实现，注释中说明原调用；
+  进程取ID(进程名) -> 按进程名取 PID；监视热键(&子程序, 热键) -> 注册全局
+  热键回调；十六到十("ABC") -> int("ABC", 16)。
 
 ## 要求
 1. 只输出 Python 3 代码，不要输出解释文字，不要用 markdown 代码块围栏。
@@ -116,16 +130,69 @@ REPAIR_PMT = '''
 {code}
 '''
 
+# 易语言窗口布局 XML -> PyQt6 布局代码
+XML_PMT = '''
+下面是一段易语言窗口布局 XML（已去除扩展属性二进制数据），定义了窗口及其中
+控件。请把它转成等价的 PyQt6 窗口布局代码，控件结构一一对应。
+
+规则:
+- 窗口 / 分组框(容器) / 标签 / 按钮 / 编辑框 / 组合框 / 单选框 / 复选框 /
+  列表框 / 图片框 / 时钟 等控件名按 XML 里的名称(名称属性)作为变量名。
+- 一律使用 PyQt6: 窗口 -> QMainWindow / QWidget，分组框 -> QGroupBox，
+  标签 -> QLabel，按钮 -> QPushButton，编辑框 -> QLineEdit / QTextEdit，
+  组合框 -> QComboBox，时钟 -> QTimer；控件事件用信号槽连接(如
+  currentTextChanged、clicked、timeout)，事件逻辑可以留空或加 TODO 注释。
+- 用绝对布局(QWidget.setGeometry / move + resize)按 XML 里的
+  左边/顶边/宽度/高度(px) 摆放控件；组合框项目可由代码自由补充，
+  若 XML 里没有明确项目则以注释 TODO 标记。
+- 只输出构建整个窗口界面的 PyQt6 代码（不包含业务逻辑），可输出一个
+  class MainWindow(QMainWindow) 并带 build_ui() 方法；放在
+  [content] 与 [/content] 之间，不要输出解释文字。
+
+<窗口XML>
+{src}
+'''
+
+XML_BLOB_ATTR_RE = re.compile(r'\s+(扩展属性数据|鼠标指针|样式|参照)="[^"]{64,}"')
+
+
+def has_code_feature(s: str) -> bool:
+    """判断文本是否含可编译的代码特征（用于拒绝纯分析文本）。"""
+    if not s:
+        return False
+    if '[content]' in s or '```' in s:
+        return True
+    return any(
+        re.match(r'^\s*(def|class|import|from|async\s+def)\b', ln)
+        for ln in s.splitlines()
+    )
+
 
 def ext_py(s: str) -> str:
-    """从 LLM 回复中提取 Python 代码。"""
+    """从 LLM 回复中提取 Python 代码。优先取 [content] 标记，其次取首个
+    def/class/import 起的连续代码段；均无则取整段。"""
     m = re.search(r'\[content\]([\s\S]*?)\[/content\]', s)
     if m:
         return m.group(1).strip()
     m = re.search(r'```python\s*([\s\S]*?)```', s, flags=re.I)
     if m:
         return m.group(1).strip()
+    m = re.search(r'```\s*([\s\S]*?)```', s)
+    if m:
+        return m.group(1).strip()
+    # 取首个 def/class/import 行到文本结尾，跳过前面的分析文字
+    lines = s.splitlines()
+    for i, ln in enumerate(lines):
+        if re.match(r'^\s*(def|class|import|from|async\s+def)\b', ln.strip()):
+            return '\n'.join(lines[i:]).strip()
     return s.strip()
+
+
+def repl_ins(text: str):
+    """把 <|x|> 指令符号改写为 </x/>，与 openai.py 的 repl_ins_token 一致，
+    避免模型把提示词里的占位符误当指令。"""
+    repl = lambda s: re.sub(r'<\|([\w\-\.]+)\|>', r'</\1/>', s)
+    return [{'role': 'user', 'content': repl(text)}]
 
 
 # --------------------------------------------------------------------------
@@ -191,15 +258,16 @@ class E2PyAgent:
     def split_e_source(text: str, max_chars: int):
         """取出公共头部，按 .子程序 边界把源码分成若干块。"""
         lines = text.split('\n')
-        cut = 0
+        cut = None
         for i, ln in enumerate(lines):
             if re.match(r'^\s*\.子程序\b', ln):
                 cut = i
                 break
-        else:  # 没有 .子程序，整段都当主体
-            cut = len(lines)
-        header = '\n'.join(lines[:cut]).strip()
-        body = lines[cut:]
+        if cut is None:  # 没有 .子程序（窗口 XML、纯声明页），整段都当主体
+            header, body = '', lines
+        else:
+            header = '\n'.join(lines[:cut]).strip()
+            body = lines[cut:]
         chunks, cur, n = [], [], 0
         for ln in body:
             cur.append(ln)
@@ -213,7 +281,90 @@ class E2PyAgent:
 
     # ---- LLM 调用 ----
 
+    def pace(self):
+        """调用前的限流退避：共享/本地服务常限流(429)，串行时摊开请求。"""
+        d = getattr(self.args, 'delay', 0) or 0
+        if d:
+            time.sleep(d)
+
+    def _ask(self, ques: str):
+        """绕过 ask_chatgpt_retry（它会在 content=None 时抛错），直接用底层
+        client 调用，并在 content 为空时回退到 reasoning_content（推理模型
+        常把代码放在 reasoning_content 里）。带指数退避重试与限流退避。"""
+        import random
+        import openai as oa
+        last_ex = None
+        client = oa.OpenAI(
+            base_url=oa.base_url,
+            api_key=oa.api_key,
+            default_headers={'User-Agent': oa.user_agent},
+            timeout=oa.timeout,
+        )
+        for i in range(self.args.retry):
+            self.pace()
+            try:
+                extra_body = {}
+                if isinstance(self.args.extra_body, str):
+                    import json as _json
+                    try:
+                        extra_body = _json.loads(self.args.extra_body)
+                    except Exception:
+                        pass
+                elif self.args.extra_body:
+                    extra_body = dict(self.args.extra_body)
+                if oa.no_think:
+                    extra_body.update(NO_THINK_EXTRA_BODY)
+                res = client.chat.completions.create(
+                    messages=repl_ins(ques),
+                    model=self.model,
+                    temperature=self.args.temp,
+                    top_p=self.args.top_p,
+                    frequency_penalty=self.args.frequency_penalty,
+                    presence_penalty=self.args.presence_penalty,
+                    max_tokens=self.args.max_tokens,
+                    extra_body=extra_body,
+                )
+                msg = res.choices[0].message
+                cont_raw = msg.content or ''
+                reasoning = getattr(msg, 'reasoning_content', None) or ''
+                if isinstance(cont_raw, list):  # 少见：多段 content
+                    cont_raw = ''.join(
+                        p.get('text', '') for p in cont_raw if isinstance(p, dict))
+                if isinstance(reasoning, list):
+                    reasoning = ''.join(
+                        p.get('text', '') for p in reasoning if isinstance(p, dict))
+                # 优先 content；content 无代码时再看 reasoning_content 里有没有代码
+                cont = cont_raw.strip()
+                if not has_code_feature(cont):
+                    if has_code_feature(reasoning):
+                        cont = reasoning
+                    else:
+                        # 两者都无代码特征（纯思考/空回复），视为失败重试
+                        raise ValueError(
+                            '回复中无代码 (content 与 reasoning_content 均非代码)')
+                out = ext_py(cont)
+                if not out:
+                    raise ValueError('提取到的代码为空（可能只输出空 [content] 标签）')
+                return out
+            except KeyboardInterrupt:
+                raise
+            except Exception as ex:
+                last_ex = ex
+                backoff = min(2.0 * (2 ** min(i, 6)), 120)
+                logger.warning('[重试 %d/%d] %s，%.0fs 后重试',
+                               i + 1, self.args.retry, ex, backoff)
+                time.sleep(backoff + random.random())
+        raise last_ex
+
     def gen_python(self, header: str, chunk: str, idx: int, total: int) -> str:
+        # 分块结果缓存：命中直接返回，断点续跑时避免重转已完成的块
+        cache_key = path.join(
+            self.cache_dir,
+            'chunk_' + md5(f'{header}\n{idx}/{total}\n{chunk}') + '.py')
+        if path.isfile(cache_key) and not self.args.force:
+            code = read_text(cache_key)
+            if code:
+                return code
         if total > 1:
             # 多块时一律当作“段”翻译，避免模型重复输出公共头部
             ques = render_prompt(
@@ -221,13 +372,19 @@ class E2PyAgent:
                 idx=str(idx), total=str(total))
         else:
             ques = render_prompt(CONVERT_PMT, src=chunk, header_hint='')
-        return ask_chatgpt_retry(
-            ques, self.model, self.args, parse_output=ext_py)
+        code = self._ask(ques)
+        write_text(cache_key, code)
+        return code
+
+    def gen_window_layout(self, src: str) -> str:
+        """窗口 XML 布局 -> PyQt6 布局代码（先去掉 base64 扩展属性）。"""
+        src = XML_BLOB_ATTR_RE.sub('', src)
+        ques = render_prompt(XML_PMT, src=src)
+        return self._ask(ques)
 
     def repair_python(self, code: str, err: str) -> str:
         ques = render_prompt(REPAIR_PMT, code=code, err=err)
-        return ask_chatgpt_retry(
-            ques, self.model, self.args, parse_output=ext_py)
+        return self._ask(ques)
 
     # ---- 校验 / 修复 ----
 
@@ -266,18 +423,25 @@ class E2PyAgent:
         cache_key = path.join(self.cache_dir, md5(src) + '.py')
         if path.isfile(cache_key) and not self.args.force:
             code = read_text(cache_key)
-            write_text(ofname, code)
-            return 'cached'
+            if code:  # 空缓存视为无效，重转
+                write_text(ofname, code)
+                return 'cached'
 
-        header, chunks = self.split_e_source(src, self.args.chunk_size)
-        parts = []
-        for i, ch in enumerate(chunks, 1):
-            parts.append(self.gen_python(header, ch, i, len(chunks)))
-        code = '\n\n'.join(parts)
+        if extname(fname).lower() == 'xml':
+            code = self.gen_window_layout(src)
+        else:
+            header, chunks = self.split_e_source(src, self.args.chunk_size)
+            parts = []
+            for i, ch in enumerate(chunks, 1):
+                parts.append(self.gen_python(header, ch, i, len(chunks)))
+            code = '\n\n'.join(parts)
 
         if self.args.verify:
             code = self.verify_repair(code, rel)
 
+        if not code.strip():
+            logger.error('[空结果] %s: 模型输出为空，跳过写入', rel)
+            return 'skip-empty'
         write_text(cache_key, code)
         write_text(ofname, code)
         return 'ok'
@@ -328,8 +492,8 @@ def build_parser():
                    help='频率惩罚')
     p.add_argument('-pp', '--presence-penalty', type=float, default=None,
                    help='存在惩罚')
-    p.add_argument('-mt', '--max-tokens', type=int, default=None,
-                   help='最大 token 数')
+    p.add_argument('-mt', '--max-tokens', type=int, default=12000,
+                   help='最大 token 数（默认 12000，避免推理模型输出被截断）')
     p.add_argument('-ua', '--user-agent',
                    default='claude-cli/2.1.41 (external, cli)',
                    help='HTTP User-Agent')
@@ -347,6 +511,8 @@ def build_parser():
                    help='分块大小(字符数)，超限将在 .子程序 边界切分')
     p.add_argument('--repair-rounds', type=int, default=3,
                    help='语法修复最大轮数')
+    p.add_argument('--delay', type=float, default=2.0,
+                   help='每次 LLM 调用前的等待秒数(限流退避，默认 2s)')
     p.add_argument('--no-verify', dest='verify', action='store_false',
                    default=True, help='跳过 compile 语法检查与修复')
     p.add_argument('--force', action='store_true', help='忽略缓存重新转换')
@@ -355,6 +521,13 @@ def build_parser():
 
 
 def main():
+    # Windows 控制台常为 GBK，统一以 UTF-8 输出，避免中文日志乱码
+    for stream_name in ('stdout', 'stderr'):
+        stream = getattr(sys, stream_name, None)
+        try:
+            stream.reconfigure(encoding='utf-8', errors='replace')
+        except Exception:
+            pass
     args = build_parser().parse_args()
     if not args.key:
         logger.error('缺少 API Key，请通过 -k 或环境变量 OPENAI_API_KEY 提供')
