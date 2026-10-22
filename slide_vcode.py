@@ -54,18 +54,7 @@ def generate_track(distance):
         track.append(round(current, 2))
     return track
 
-def solve_captcha():
-    _, init_r = init_captcha('123123')
-    slider_url = 'https://static-captcha-sgp.aliyuncs.com/' + init_r['PuzzleImage']
-    bg_url = 'https://static-captcha-sgp.aliyuncs.com/' + init_r['Image']
-    slider = cv2.imdecode(
-        np.frombuffer(requests.get(slider_url).content, np.uint8),
-        cv2.IMREAD_COLOR,
-    )
-    bg = cv2.imdecode(
-        np.frombuffer(requests.get(bg_url).content, np.uint8),
-        cv2.IMREAD_COLOR,
-    )
+def gen_captcha_trace(bg, slider):
     slider2v = 255 - cv2.inRange(
         slider, 
         np.asarray([100, 100, 100]), 
@@ -86,9 +75,23 @@ def solve_captcha():
     match = cv2.matchTemplate(bg2v, slider2v, cv2.TM_CCOEFF_NORMED)
     _, max_val, _, max_loc = cv2.minMaxLoc(match)
     print(f'sc: {max_val}, loc: {max_loc}')
-    # draw_match(bg, slider2v, max_loc)
+    draw_match(bg, slider2v, max_loc)
     track = generate_track(max_loc[0])
     print(f'track: {track}')
+
+def solve_captcha():
+    _, init_r = init_captcha('123123')
+    slider_url = 'https://static-captcha-sgp.aliyuncs.com/' + init_r['PuzzleImage']
+    bg_url = 'https://static-captcha-sgp.aliyuncs.com/' + init_r['Image']
+    slider = cv2.imdecode(
+        np.frombuffer(requests.get(slider_url).content, np.uint8),
+        cv2.IMREAD_COLOR,
+    )
+    bg = cv2.imdecode(
+        np.frombuffer(requests.get(bg_url).content, np.uint8),
+        cv2.IMREAD_COLOR,
+    )
+    trace = gen_captcha_trace(bg, slider)
 
 
 def percent_encode(value: Any) -> str:
