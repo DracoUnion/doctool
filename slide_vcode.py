@@ -6,6 +6,7 @@ session; this script does not forge anti-abuse tokens.
 """
 from __future__ import annotations
 
+import string
 import random
 import cv2
 import numpy as np
@@ -25,7 +26,9 @@ from email.utils import parsedate_to_datetime
 from typing import Any, Mapping
 from urllib.parse import parse_qs, quote
 
-
+WORKER_DOMAIN = "apimail.flygon.org"  # 替换为你的后台域名，比如我的，apimail.linuxdo.love
+EMAIL_DOMAIN = "flygon.org" # 你的域名地址
+ADMIN_PASSWORD = os.environ.get('CF_EMAIL_ADMIN_PW', '') # 你的管理员密码
 CAPTCHA_HOST = "https://13lbkb5.captcha-open-southeast.aliyuncs.com/"
 UPLOAD_HOST = "https://upload.captcha-open-southeast.aliyuncs.com/"
 CAPTCHA_KEY_ID = "111jdk439dJJIjd023823201"
@@ -304,17 +307,16 @@ class QoderSession:
         payload.update(bx)
         return self.post_json("/api/v1/users", payload).json()
 
+def gen_name():
+    return "".join(random.choices(string.ascii_lowercase + string.digits, k=10))
 
-def create_email(worker_domain: str, email_domain: str,
-                 admin_password: str) -> tuple[str, str]:
+def create_email() -> tuple[str, str]:
     """Create a mailbox using the authorized API used by agnes_reg.py."""
-    import random
-    import string
-    local = "".join(random.choices(string.ascii_lowercase + string.digits, k=10))
+    local = gen_name()
     response = requests.post(
-        f"https://{worker_domain}/admin/new_address",
-        json={"enablePrefix": True, "name": local, "domain": email_domain},
-        headers={"x-admin-auth": admin_password, "Content-Type": "application/json"},
+        f"https://{WORKER_DOMAIN}/admin/new_address",
+        json={"enablePrefix": True, "name": local, "domain": EMAIL_DOMAIN},
+        headers={"x-admin-auth": ADMIN_PASSWORD, "Content-Type": "application/json"},
         timeout=30,
     )
     response.raise_for_status()
@@ -324,14 +326,14 @@ def create_email(worker_domain: str, email_domain: str,
     return data["jwt"], data["address"]
 
 
-def poll_email_code(jwt: str, worker_domain: str,
+def poll_email_code(jwt: str, WORKER_DOMAIN: str,
                     timeout: int = 180, interval: int = 5) -> str:
     """Poll the mailbox and return the first six-digit verification code."""
     deadline = time.monotonic() + timeout
     pattern = re.compile(r"(?:verification-code|验证码)[^0-9]{0,80}(\d{6})", re.I)
     while time.monotonic() < deadline:
         response = requests.get(
-            f"https://{worker_domain}/api/mails",
+            f"https://{WORKER_DOMAIN}/api/mails",
             params={"limit": 10, "offset": 0},
             headers={"Authorization": f"Bearer {jwt}"}, timeout=30,
         )
@@ -396,11 +398,11 @@ def verify_captcha(*, scene_id: str, certify_id: str, device_token: str,
 
 def register(*, bx_tokens: Mapping[str, str], device_token: str,
               dynamic_data: str, verify_key_id: str,
-              verify_key_secret: str, worker_domain: str,
-              email_domain: str, admin_password: str,
-              password: str = "Asd123!@#", name: str = "qwe qweqwe") -> dict[str, Any]:
+              verify_key_secret: str) -> dict[str, Any]:
     """Run the documented request sequence using externally supplied SDK data."""
-    jwt, email = create_email(worker_domain, email_domain, admin_password)
+    name = gen_name() + ' ' + gen_name()
+    password = gen_name()
+    jwt, email = create_email()
     qoder = QoderSession()
     qoder.open_signup()
     qoder.check_login_type(email, bx_tokens)
@@ -420,7 +422,7 @@ def register(*, bx_tokens: Mapping[str, str], device_token: str,
         access_key_id=verify_key_id, access_key_secret=verify_key_secret,
     )
     qoder.send_verification_code(email, bx_tokens)
-    code = poll_email_code(jwt, worker_domain)
+    code = poll_email_code(jwt, WORKER_DOMAIN)
     return qoder.register(email, password, code, name, bx_tokens)
 
 
