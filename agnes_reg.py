@@ -447,8 +447,9 @@ def reg_agnes_all():
         print(f'获取 APIKEY 失败：{errmsg}')
         return False
     print(f'获取 APIKEY 成功：{apikey}')
+    dttmstr = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
     open('agnes.txt', 'a', encoding='utf8') \
-        .write(f'{datetime.now()}----{email}----{pwd}----{acckey}----{apikey}\n')
+        .write(f'{dttmstr}----{email}----{pwd}----{acckey}----{apikey}\n')
     return True
 
 def main():
