@@ -15,6 +15,7 @@ import subprocess
 import hashlib
 import time as _time
 import urllib.parse
+from datetime import datetime
 
 def match_tmpl_rot(bg_img, tmpl_img, conf=0):
 
@@ -446,7 +447,8 @@ def reg_agnes_all():
         print(f'获取 APIKEY 失败：{errmsg}')
         return False
     print(f'获取 APIKEY 成功：{apikey}')
-    open('agnes.txt', 'a', encoding='utf8').write(f'{email}----{pwd}----{acckey}----{apikey}\n')
+    open('agnes.txt', 'a', encoding='utf8') \
+        .write(f'{datetime.now()}----{email}----{pwd}----{acckey}----{apikey}\n')
     return True
 
 def main():
