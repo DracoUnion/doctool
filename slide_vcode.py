@@ -9,6 +9,7 @@ from __future__ import annotations
 import random
 import cv2
 import numpy as np
+from camoufox.sync_api import Camoufox
 import requests
 from imgyaso.adathres import adathres
 import base64
@@ -22,7 +23,7 @@ import uuid
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Mapping
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote
 
 
 CAPTCHA_HOST = "https://13lbkb5.captcha-open-southeast.aliyuncs.com/"
@@ -31,6 +32,106 @@ CAPTCHA_KEY_ID = "111jdk439dJJIjd023823201"
 CAPTCHA_KEY_SECRET = "222aiJodos2938JDdosko2djd82sf0"
 SCENE_ID = "1r7eif79x"
 PREFIX = "13lbkb5"
+
+
+def get_camoufox_tokens(headless: bool = True, wait_ms: int = 8000) -> dict[str, Any]:
+    """Open Qoder with Camoufox and read fresh AWSC tokens.
+
+    The browser is intentionally kept alive only while values are read. The
+    returned values are short-lived and should be used with the same browser
+    session/cookies when possible.
+    """
+    launch_opts = {
+        "headless": headless,
+        "humanize": True,
+        "locale": "zh-CN",
+        "os": ("windows",),
+    }
+    with Camoufox(**launch_opts) as context:
+        page = context.new_page()
+        page.goto("https://qoder.com/users/sign-up", wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(wait_ms)
+        values = page.evaluate("""() => {
+          const s = window.__baxia__ || {};
+          return {
+            cookies: document.cookie,
+            bx_ua: s.postFYModule?.getFYToken?.() || "",
+            bx_umidtoken: s.getFYModule?.getUidToken?.() || "",
+            bx_et: s.etModule?.getETToken?.() || "",
+            captcha: window.AliyunCaptchaConfig || null,
+          };
+        }""")
+        required = ("bx_ua", "bx_umidtoken", "bx_et")
+        missing = [key for key in required if not values.get(key)]
+        if missing:
+            raise RuntimeError(f"Camoufox did not produce AWSC values: {missing}")
+        return values
+
+
+def get_camoufox_captcha_session(headless: bool = True) -> dict[str, Any]:
+    """Initialize the official CAPTCHA SDK and return a fresh challenge.
+
+    ``data`` is deliberately not fabricated here: it is produced by the
+    dynamic captcha JS after a real pointer drag in this browser context.
+    """
+    launch_opts = {
+        "headless": headless,
+        "humanize": True,
+        "locale": "zh-CN",
+        "os": ("windows",),
+    }
+    with Camoufox(**launch_opts) as context:
+        page = context.new_page()
+        captcha_requests: list[dict[str, Any]] = []
+
+        def capture_captcha_request(request):
+            if "captcha-open" not in request.url or not request.post_data:
+                return
+            if "Action=InitCaptcha" not in request.post_data:
+                return
+            values = parse_qs(request.post_data, keep_blank_values=True)
+            device = values.get("DeviceToken", [""])[0]
+            if device:
+                captcha_requests.append({
+                    "url": request.url,
+                    "device_token": device,
+                    "params": {key: value[-1] for key, value in values.items()},
+                })
+
+        page.on("request", capture_captcha_request)
+        page.goto("https://qoder.com/users/sign-up", wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(8000)
+        result = page.evaluate("""async (sceneId) => {
+          return await new Promise(resolve => {
+            let done = false;
+            const finish = value => { if (!done) { done = true; resolve(value); } };
+            if (typeof window.initAliyunCaptcha !== "function")
+              return finish({ok:false, error:"initAliyunCaptcha unavailable"});
+            window.initAliyunCaptcha({SceneId: sceneId, mode:"embed", language:"zh", autoShow:true},
+              (code, response) => finish({ok:true, response: response || code}));
+            setTimeout(() => finish({ok:false, error:"captcha init timeout"}), 15000);
+          });
+        }""", SCENE_ID)
+        if not result.get("ok"):
+            raise RuntimeError(result.get("error", "captcha init failed"))
+        if not captcha_requests:
+            raise RuntimeError("CAPTCHA init request did not expose DeviceToken")
+        tokens = page.evaluate("""() => {
+          const s = window.__baxia__ || {};
+          return {
+            cookies: document.cookie,
+            bx_ua: s.postFYModule?.getFYToken?.() || "",
+            bx_umidtoken: s.getFYModule?.getUidToken?.() || "",
+            bx_et: s.etModule?.getETToken?.() || "",
+          };
+        }""")
+        return {
+            "captcha": result["response"],
+            "device_token": captcha_requests[-1]["device_token"],
+            "captcha_request": captcha_requests[-1],
+            **tokens,
+        }
+
 
 def draw_match(bg, sld, loc):
     h, w = sld.shape[:2]
@@ -54,7 +155,7 @@ def generate_track(distance):
         track.append(round(current, 2))
     return track
 
-def gen_captcha_trace(bg, slider):
+def gen_captcha_track(bg, slider):
     slider2v = 255 - cv2.inRange(
         slider, 
         np.asarray([100, 100, 100]), 
@@ -79,8 +180,8 @@ def gen_captcha_trace(bg, slider):
     track = generate_track(max_loc[0])
     print(f'track: {track}')
 
-def solve_captcha():
-    _, init_r = init_captcha('123123')
+def solve_captcha(device_token):
+    _, init_r = init_captcha(device_token)
     slider_url = 'https://static-captcha-sgp.aliyuncs.com/' + init_r['PuzzleImage']
     bg_url = 'https://static-captcha-sgp.aliyuncs.com/' + init_r['Image']
     slider = cv2.imdecode(
@@ -91,7 +192,7 @@ def solve_captcha():
         np.frombuffer(requests.get(bg_url).content, np.uint8),
         cv2.IMREAD_COLOR,
     )
-    trace = gen_captcha_trace(bg, slider)
+    trace = gen_captcha_track(bg, slider)
 
 
 def percent_encode(value: Any) -> str:
@@ -326,15 +427,9 @@ def register(*, bx_tokens: Mapping[str, str], device_token: str,
 
 
 if __name__ == "__main__":
-    # Deterministic sample from ali_vcode.txt (no network request is made).
-    sample = {
-        "AaduaneId": "111jdk439dJJIjd023823201",
-        "SignatureMethod": "HMAC-SHA1", "SignatureVersion": "1.0",
-        "Format": "JSON", "Timestamp": "2026-10-22T10:13:56Z",
-        "Version": "2023-03-05", "Action": "InitCaptchaV3",
-        "SceneId": "1r7eif79x", "Language": "zh", "Mode": "embed",
-        "DeviceToken": "REPLACE_WITH_BROWSER_DEVICE_TOKEN",
-        "SignatureNonce": "56565ddf-774c-493f-a1ed-0e040d439979",
-    }
-    print(rpc_signature(sample, "222aiJodos2938JDdosko2djd82sf0"))
-    solve_captcha()
+    # Camoufox must create fresh AWSC values in a real browser context.
+    # Keep the browser-derived values in memory for the subsequent request
+    # sequence; do not reuse the values from ali_vcode.txt.
+    browser_values = get_camoufox_captcha_session()
+    # print(json.dumps(browser_values, ensure_ascii=False))
+    solve_captcha(browser_values['device_token'])
