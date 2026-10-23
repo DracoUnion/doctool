@@ -569,43 +569,6 @@ def verify_captcha(*, scene_id: str, certify_id: str, device_token: str,
     return result
 
 
-def register(*, bx_tokens: Mapping[str, str], device_token: str,
-             security_token: str) -> dict[str, Any]:
-    """Run the documented request sequence using externally supplied SDK data.
-
-    The slider ``CaptchaVerifyParam`` is computed locally in pe.js 3.0
-    format from ``security_token`` (returned by InitCaptcha); no external
-    ``dynamic_data`` is required.  The VerifyCaptchaV3 AccessKey pair is the
-    hard-coded ``CAPTCHA_ACC_KEY_ID`` / ``CAPTCHA_ACC_KEY_SECRET``.
-    """
-    name = gen_name() + ' ' + gen_name()
-    password = gen_name()
-    jwt, email = create_email()
-    qoder = QoderSession()
-    qoder.open_signup()
-    qoder.check_login_type(email, bx_tokens)
-
-    init_params, init_result = init_captcha(device_token)
-    if not init_result.get("Success"):
-        raise RuntimeError(f"captcha initialization failed: {init_result}")
-    certify_id = init_result["CertifyId"]
-
-    upload_log({
-        "sId": SCENE_ID, "pfx": PREFIX, "cId": certify_id,
-        "mInit": {"s": True, "msg": "INIT_SUCCESS"},
-    })
-    verify_captcha(
-        scene_id=SCENE_ID, certify_id=certify_id,
-        device_token=device_token,
-        captcha_verify_param=aliyun_verify_param_v3(
-            certify_id=certify_id, scene_id=SCENE_ID, security_token=security_token),
-    )
-    qoder.send_verification_code(email, bx_tokens)
-    code = poll_email_code(jwt, WORKER_DOMAIN)
-    return qoder.register(email, password, code, name, bx_tokens)
-
-
-
 
 def seed_requests_session(browser_values: Mapping[str, Any]) -> requests.Session:
     """Copy cookies from the short Camoufox bootstrap into requests."""
@@ -616,7 +579,7 @@ def seed_requests_session(browser_values: Mapping[str, Any]) -> requests.Session
             session.cookies.set(key, value, domain="qoder.com", path="/")
     return session
 
-def register_requests_only(browser_values: Mapping[str, Any]) -> dict[str, Any]:
+def register() -> dict[str, Any]:
     """Use requests after the one-time Camoufox token bootstrap.
 
     The browser is not used after ``browser_values`` has been acquired.  The
@@ -625,6 +588,10 @@ def register_requests_only(browser_values: Mapping[str, Any]) -> dict[str, Any]:
     ``CAPTCHA_DYNAMIC_DATA`` is required; the VerifyCaptchaV3 AccessKey pair
     is hard-coded in ``CAPTCHA_ACC_KEY_ID`` / ``CAPTCHA_ACC_KEY_SECRET``.
     """
+    browser_values = get_camoufox_captcha_session(
+        headless=True,
+    )
+    print(f'[0] 获取浏览器指纹：{browser_values}')
     bx = {
         "bx-ua": browser_values["bx_ua"],
         "bx-umidtoken": browser_values["bx_umidtoken"],
@@ -664,10 +631,11 @@ def register_requests_only(browser_values: Mapping[str, Any]) -> dict[str, Any]:
     print(f'[6] 发送短信验证码：{r}')
     code = poll_email_code(jwt, WORKER_DOMAIN)
     print(f'[7] 获取短信验证码：{code}')
-    result = qoder.register(email, gen_name() + gen_name(), code,
+    pwd = gen_name() + gen_name()
+    result = qoder.register(email, pwd, code,
                              gen_name() + " " + gen_name(), bx)
     print(f'[8] 注册 Qoder：{result}')
-    return {"email": email, "login_type": login_type,
+    return {"email": email, "password": pwd, "login_type": login_type,
             "captcha": verify_result, "registration": result}
 
 
@@ -851,14 +819,7 @@ def aliyun_pe_decoder_selftest():
 
 
 if __name__ == "__main__":
-    if os.environ.get("PE_SELFTEST"):
-        print("pe.js crypto selftest:", "PASS" if aliyun_pe_decoder_selftest() else "FAIL")
-        sys.exit(0)
     # Camoufox is used only once, at the beginning, to obtain fresh browser
     # values. All subsequent HTTP requests use requests.Session.
-    values = get_camoufox_captcha_session(
-        headless=os.environ.get("QODER_HEADLESS", "1") != "0"
-    )
-    if os.environ.get("ANALYZE_PE_JS"):
-        print(json.dumps(analyze_pe_script(), ensure_ascii=False, indent=2))
-    print(json.dumps(register_requests_only(values), ensure_ascii=False, indent=2))
+
+    print(json.dumps(register(), ensure_ascii=False, indent=2))
