@@ -373,7 +373,8 @@ class QoderSession:
 
     def open_signup(self) -> str:
         response = self.http.get(f"{self.base_url}/users/sign-up", timeout=30)
-        response.raise_for_status()
+        if 400 <= response.status_code < 600:
+            raise requests.HTTPError(f'{response.url} HTTP {response.status_code}: {response.text}')
         self.csrf_token = self.http.cookies.get("qoder_csrf_token", "")
         if not self.csrf_token:
             raise RuntimeError("qoder_csrf_token was not issued")
@@ -392,7 +393,8 @@ class QoderSession:
             f"{self.base_url}{path}", json=dict(payload),
             headers=headers, timeout=30,
         )
-        response.raise_for_status()
+        if 400 <= response.status_code < 600:
+            raise requests.HTTPError(f'{response.url} HTTP {response.status_code}: {response.text}')
         return response
 
     def check_login_type(self, email: str, bx: Mapping[str, str] | None = None) -> dict[str, Any]:
@@ -426,7 +428,8 @@ def create_email() -> tuple[str, str]:
         headers={"x-admin-auth": ADMIN_PASSWORD, "Content-Type": "application/json"},
         timeout=30,
     )
-    response.raise_for_status()
+    if 400 <= response.status_code < 600:
+        raise requests.HTTPError(f'{response.url} HTTP {response.status_code}: {response.text}')
     data = response.json()
     if not data.get("jwt") or not data.get("address"):
         raise RuntimeError(f"mailbox API returned no address: {data}")
@@ -444,7 +447,8 @@ def poll_email_code(jwt: str, WORKER_DOMAIN: str,
             params={"limit": 10, "offset": 0},
             headers={"Authorization": f"Bearer {jwt}"}, timeout=30,
         )
-        response.raise_for_status()
+        if 400 <= response.status_code < 600:
+            raise requests.HTTPError(f'{response.url} HTTP {response.status_code}: {response.text}')
         for item in response.json().get("results", []):
             raw = item.get("raw", "")
             match = pattern.search(raw)
@@ -463,7 +467,8 @@ def init_captcha(device_token: str) -> tuple[dict[str, Any], dict[str, Any]]:
         CAPTCHA_KEY_ID, CAPTCHA_KEY_SECRET,
     )
     response = requests.post(CAPTCHA_HOST, data=params, timeout=30)
-    response.raise_for_status()
+    if 400 <= response.status_code < 600:
+        raise requests.HTTPError(f'{response.url} HTTP {response.status_code}: {response.text}')
     return params, response.json()
 
 
@@ -473,7 +478,8 @@ def upload_log(log: Mapping[str, Any]) -> dict[str, Any]:
         CAPTCHA_KEY_ID, CAPTCHA_KEY_SECRET,
     )
     response = requests.post(UPLOAD_HOST, data=params, timeout=30)
-    response.raise_for_status()
+    if 400 <= response.status_code < 600:
+        raise requests.HTTPError(f'{response.url} HTTP {response.status_code}: {response.text}')
     return response.json()
 
 
@@ -562,7 +568,8 @@ def verify_captcha(*, scene_id: str, certify_id: str, device_token: str,
         CAPTCHA_ACC_KEY_ID, CAPTCHA_ACC_KEY_SECRET, key_name="AccessKeyId",
     )
     response = requests.post(CAPTCHA_HOST, data=params, timeout=30)
-    response.raise_for_status()
+    if 400 <= response.status_code < 600:
+        raise requests.HTTPError(f'{response.url} HTTP {response.status_code}: {response.text}')
     result = response.json()
     if not result.get("Success"):
         raise RuntimeError(f"captcha verification failed: {result}")
