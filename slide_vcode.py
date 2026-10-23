@@ -19,6 +19,7 @@ import hmac
 import json
 import os
 import re
+import sys
 import time
 import uuid
 from datetime import datetime, timezone
@@ -180,24 +181,124 @@ def gen_captcha_track(bg, slider):
     _, max_val, _, max_loc = cv2.minMaxLoc(match)
     print(f'sc: {max_val}, loc: {max_loc}')
     draw_match(bg, slider2v, max_loc)
-    track = generate_track(max_loc[0])
+    distance = int(max_loc[0])
+    track = generate_track(distance)
     print(f'track: {track}')
-
-def solve_captcha(device_token):
-    _, init_r = init_captcha(device_token)
-    slider_url = 'https://static-captcha-sgp.aliyuncs.com/' + init_r['PuzzleImage']
-    bg_url = 'https://static-captcha-sgp.aliyuncs.com/' + init_r['Image']
-    slider = cv2.imdecode(
-        np.frombuffer(requests.get(slider_url).content, np.uint8),
-        cv2.IMREAD_COLOR,
-    )
-    bg = cv2.imdecode(
-        np.frombuffer(requests.get(bg_url).content, np.uint8),
-        cv2.IMREAD_COLOR,
-    )
-    trace = gen_captcha_track(bg, slider)
+    return distance, track
 
 
+def run_browser_registration(headless: bool = True) -> dict[str, Any]:
+    """Run signup in one Camoufox session so SDK state and cookies persist.
+
+    The official page generates DeviceToken, bx-* values and the encrypted
+    slider payload. The slider is located locally, while the dynamic SDK
+    receives the real pointer events and performs its own verification.
+    """
+    jwt, email = create_email()
+    name = gen_name() + " " + gen_name()
+    password = gen_name() + gen_name()
+    launch_opts = {
+        "headless": headless, "humanize": True,
+        "locale": "zh-CN", "os": ("windows",),
+    }
+    captured: list[dict[str, Any]] = []
+    with Camoufox(**launch_opts) as context:
+        page = context.new_page()
+
+        def capture(request):
+            if (
+                request.url.endswith("/api/v1/verificationCodes")
+                or request.url.endswith("/api/v1/users")
+                or "captcha-open" in request.url
+            ):
+                captured.append({
+                    "url": request.url,
+                    "method": request.method,
+                    "post": request.post_data or "",
+                })
+
+        page.on("request", capture)
+        page.goto("https://qoder.com/users/sign-up", wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(9000)
+        page.fill("#basic_firstName", name.split(" ", 1)[0])
+        page.fill("#basic_lastName", name.split(" ", 1)[1])
+        page.fill("#basic_email", email)
+        page.check("input[type=checkbox]")
+        page.click("button[type=submit]")
+        page.wait_for_timeout(3000)
+        page.fill("#basic_password", password)
+        page.click("button[type=submit]")
+        page.wait_for_timeout(4000)
+
+        # Expand the captcha if it is still in its compact embed state.
+        try:
+            page.locator(".aliyun-captcha").first.click(timeout=3000)
+        except Exception:
+            pass
+        page.wait_for_timeout(1500)
+        puzzle = page.locator("img.puzzle")
+        slider = page.locator(".slider-move")
+        if not puzzle.count() or not slider.count():
+            raise RuntimeError("captcha puzzle/slider was not rendered")
+        puzzle_src = puzzle.get_attribute("src") or ""
+        piece_src = ""
+        for image in page.locator("img").all():
+            box = image.bounding_box()
+            src = image.get_attribute("src") or ""
+            if box and box[2] < 80 and box[3] > 150 and src.startswith("data:"):
+                piece_src = src
+                break
+        if not puzzle_src.startswith("data:") or not piece_src:
+            raise RuntimeError("captcha images are not available in the DOM")
+        bg = cv2.imdecode(np.frombuffer(base64.b64decode(puzzle_src.split(",", 1)[1]), np.uint8), cv2.IMREAD_COLOR)
+        piece = cv2.imdecode(np.frombuffer(base64.b64decode(piece_src.split(",", 1)[1]), np.uint8), cv2.IMREAD_COLOR)
+        if bg is None or piece is None:
+            raise RuntimeError("cannot decode captcha images")
+        match = cv2.matchTemplate(cv2.cvtColor(bg, cv2.COLOR_BGR2GRAY), cv2.cvtColor(piece, cv2.COLOR_BGR2GRAY), cv2.TM_CCOEFF_NORMED)
+        _, score, _, loc = cv2.minMaxLoc(match)
+        if score < 0.15:
+            raise RuntimeError(f"weak captcha match: {score:.3f}")
+        box = slider.bounding_box()
+        parent = slider.locator("..")
+        pbox = parent.bounding_box()
+        if not box or not pbox:
+            raise RuntimeError("captcha slider geometry unavailable")
+        source_w = bg.shape[1]
+        display_w = puzzle.bounding_box()[2] if puzzle.bounding_box() else source_w
+        piece_w = piece.shape[1]
+        travel = max(1.0, pbox[2] - box[2])
+        distance = loc[0] * travel / max(1, source_w - piece_w)
+        start_x, start_y = box[0] + box[2] / 2, box[1] + box[3] / 2
+        page.mouse.move(start_x, start_y)
+        page.mouse.down()
+        for point in generate_track(distance):
+            page.mouse.move(start_x + point, start_y + random.uniform(-1.5, 1.5), steps=2)
+            page.wait_for_timeout(random.randint(12, 28))
+        page.mouse.up()
+        page.wait_for_timeout(5000)
+
+        # The dynamic SDK submits verificationCodes after successful CAPTCHA.
+        if not any("verificationCodes" in x["url"] for x in captured):
+            raise RuntimeError("captcha did not trigger verificationCodes")
+        code = poll_email_code(jwt, WORKER_DOMAIN)
+        visible_inputs = page.locator("input:visible")
+        code_filled = False
+        for index in range(visible_inputs.count()):
+            field = visible_inputs.nth(index)
+            typ = field.get_attribute("type") or "text"
+            placeholder = field.get_attribute("placeholder") or ""
+            if typ == "text" and ("code" in placeholder.lower() or "验证码" in placeholder):
+                field.fill(code)
+                code_filled = True
+                break
+        if not code_filled:
+            raise RuntimeError("verification-code input was not found")
+        page.click("button[type=submit]")
+        page.wait_for_timeout(5000)
+        users = [x for x in captured if x["url"].endswith("/api/v1/users")]
+        return {"email": email, "password": password, "code": code,
+                "users_request": users[-1] if users else None,
+                "url": page.url}
 def percent_encode(value: Any) -> str:
     """Alibaba RPC percent encoding (RFC3986 variant)."""
     return quote(str(value), safe="~").replace("+", "%20").replace("*", "%2A")
@@ -428,10 +529,250 @@ def register(*, bx_tokens: Mapping[str, str], device_token: str,
 
 
 
+def seed_requests_session(browser_values: Mapping[str, Any]) -> requests.Session:
+    """Copy cookies from the short Camoufox bootstrap into requests."""
+    session = requests.Session()
+    for item in str(browser_values.get("cookies", "")).split("; "):
+        if "=" in item:
+            key, value = item.split("=", 1)
+            session.cookies.set(key, value, domain="qoder.com", path="/")
+    return session
+
+
+def register_requests_only(browser_values: Mapping[str, Any]) -> dict[str, Any]:
+    """Use requests after the one-time Camoufox token bootstrap.
+
+    The browser is not used after ``browser_values`` has been acquired.
+    ``CAPTCHA_DYNAMIC_DATA`` and ``VERIFY_ACCESS_KEY_SECRET`` must be supplied
+    by the authorized integration that generated the real slider result.
+    """
+    bx = {
+        "bx-ua": browser_values["bx_ua"],
+        "bx-umidtoken": browser_values["bx_umidtoken"],
+        "bx_et": browser_values["bx_et"],
+    }
+    jwt, email = create_email()
+    session = seed_requests_session(browser_values)
+    qoder = QoderSession(session=session)
+    qoder.open_signup()
+    login_type = qoder.check_login_type(email, bx)
+
+    _, init_result = init_captcha(browser_values["device_token"])
+    if not init_result.get("Success"):
+        raise RuntimeError(f"captcha initialization failed: {init_result}")
+    certify_id = init_result["CertifyId"]
+    upload_log({"sId": SCENE_ID, "pfx": PREFIX, "cId": certify_id,
+                "mInit": {"s": True, "msg": "INIT_SUCCESS"}})
+
+    dynamic_data = os.environ.get("CAPTCHA_DYNAMIC_DATA", "")
+    verify_secret = os.environ.get("VERIFY_ACCESS_KEY_SECRET", "")
+    verify_key_id = os.environ.get("VERIFY_ACCESS_KEY_ID", "")
+    if not dynamic_data or not verify_secret or not verify_key_id:
+        raise RuntimeError(
+            "requests phase requires CAPTCHA_DYNAMIC_DATA, "
+            "VERIFY_ACCESS_KEY_ID and VERIFY_ACCESS_KEY_SECRET"
+        )
+    verify_result = verify_captcha(
+        scene_id=SCENE_ID, certify_id=certify_id,
+        device_token=browser_values["device_token"], dynamic_data=dynamic_data,
+        access_key_id=verify_key_id, access_key_secret=verify_secret,
+    )
+    qoder.send_verification_code(email, bx)
+    code = poll_email_code(jwt, WORKER_DOMAIN)
+    result = qoder.register(email, gen_name() + gen_name(), code,
+                             gen_name() + " " + gen_name(), bx)
+    return {"email": email, "login_type": login_type,
+            "captcha": verify_result, "registration": result}
+
+
+def analyze_pe_script(path: str = "pe.js") -> dict[str, Any]:
+    """Return static diagnostics for a downloaded Aliyun dynamic captcha JS.
+
+    This is deliberately analysis-only: it reports markers and offsets but
+    does not synthesize CAPTCHA ``data`` or bypass the browser verifier.
+    """
+    source = open(path, "r", encoding="utf-8").read()
+    markers = (
+        "ACCESS_KEY", "ACCESS_SEC", "AES_IV", "WEB_AES_SECRET_KEY",
+        "INIT_MD5_SECRET_SALT", "VerifyCaptchaV3", "captchaVerifyCallback",
+        "securityToken", "deflate", "btoa", "window.AliyunCaptcha",
+    )
+    offsets: dict[str, list[int]] = {}
+    for marker in markers:
+        positions: list[int] = []
+        start = 0
+        while True:
+            pos = source.find(marker, start)
+            if pos < 0:
+                break
+            positions.append(pos)
+            start = pos + len(marker)
+            if len(positions) >= 20:
+                break
+        offsets[marker] = positions
+    return {
+        "path": os.path.abspath(path),
+        "bytes": os.path.getsize(path),
+        "single_line": "\\n" not in source,
+        "markers": {key: bool(value) for key, value in offsets.items()},
+        "offsets": offsets,
+    }
+
+
+# ---------------------------------------------------------------------------
+# pe.js (Aliyun CAPTCHA SDK) encryption of CaptchaVerifyParam / DeviceData.
+#
+# The dynamic captcha JS (pe.js) computes the crypted ``data``/``DeviceData``
+# field that RPC request bodies carry.  Deobfuscating pe.js shows the exact
+# chain (verified byte-for-byte against a browser-run SDK):
+#
+#   de(key, plaintext) = base64( AES-128-CBC( key = utf8(key)[:16],
+#                            iv  = utf8("0123456789ABCDEF")[:16] ) )
+#   be(arr)            = de(data_key, "#".join(arr))
+#   DeviceData         = be([ app_key, "W",
+#                             de(flag_key, platform_string),
+#                             app_version, "CLOUD", "" ])
+#
+# The AES integral is implemented below, along with a port of pe.js's
+# mangled string-table decoder (``B``) so the SDK keys can be re-derived.
+# ---------------------------------------------------------------------------
+
+
+def aliyun_captcha_encrypt(plaintext, aes_key, iv="0123456789ABCDEF"):
+    """Port of pe.js ``de(t, r)``: AES-128-CBC + PKCS7 + base64.
+
+    ``aes_key`` is used as UTF-8 text; CryptoJS truncates it to the block
+    size for AES-128 (16 bytes).  ``iv`` likewise on its first 16 bytes.
+    """
+    from Crypto.Cipher import AES as _AES
+    from Crypto.Util.Padding import pad as _pad
+    key = aes_key.encode("utf-8")[:16]
+    ivb = iv.encode("utf-8")[:16]
+    cipher = _AES.new(key, _AES.MODE_CBC, iv=ivb)
+    return base64.b64encode(cipher.encrypt(_pad(plaintext.encode("utf-8"), 16))).decode()
+
+
+# --- pe.js key-module constants (decoded from the SDK's mangled tables). ---
+# The ACCESS_KEY / WEB_AES / AES_IV / INIT_MD5_SECRET_SALT values below are
+# decoded from pe.js via the ``aliyun_pe_decoder()`` string table; keeping
+# them here lets a script reuse them without re-running the decoder.
+
+PE_CAPTCHA_KEYS = {
+    "ACCESS_KEY_ID": "7JLsB18MnA7GX3d6LxErT1sGT68xcVuOAoxz0b7vVzY=",
+    "ACCESS_KEY_SECRET": "n9jH0yACW8YrgOBcM0v7u45+/bfozcSz8ZpvzGBXg3E=",
+    "WEB_AES_SECRET_KEY": "DNsKKPRHfOTuFph6taPHkC+TbC6YUaXi1NfQv95Ez2k=",
+    "AES_IV": "d35db7e39ebbf3d001083105",
+    "INIT_MD5_SECRET_SALT": ("VgKD/Zm+aFFPvDw0jB2HVVR74GUT+RsG"
+                             "Yr6SziJDvbdgDPpJUtAx0mTMzexE3sns"),
+    "API_VERSION": "2023-03-05",
+}
+
+# Fixed per-build AES keys used by be/de for the InitCaptcha flow.
+PE_DATA_KEY = "45f8ac1e1de14397"
+PE_FLAG_KEY = "c175a358550d02e2"
+
+
+def aliyun_make_device_data(app_key, scene_id, *,
+                            platform="W.10001.c", app_name="saf-captcha",
+                            app_version="W20220202", prefix="",
+                            region="cn", data_key=PE_DATA_KEY,
+                            flag_key=PE_FLAG_KEY):
+    """Build the InitCaptcha ``DeviceData`` the way pe.js does.
+
+    The plaintext is a ``#``-joined envelope whose middle element is the
+    AES-encrypted platform string; the whole envelope is then encrypted
+    again with ``data_key``.
+    """
+    platform_str = f"{platform}#{app_name}#{scene_id}#captcha-normal#{prefix}#{region}"
+    f = aliyun_captcha_encrypt(platform_str, flag_key)
+    return aliyun_captcha_encrypt(
+        f"{app_key}#W#{f}#{app_version}#CLOUD#", data_key)
+
+
+# --- port of pe.js's mangled string-table decoder (function ``B``). --------
+# pe.js hides its constants in an array of base64 fragments plus a per-run
+# XOR/hex table.  ``aliyun_pe_decode`` reproduces the JS loop exactly so the
+# secrets can be regenerated from the raw script instead of trusting a copy.
+
+_PE_HEX_PREFIX = "7260735e55622621457c7d5b207e584e794725386151667f4d4176432f2a46425f782e3c235a67504074754f7059567b5c6e52536d645422246f7a652771445d63"
+_PE_HEX_XOR = 23
+_PE_ARRAY = [
+    "8oemYIeidwR", "qenIeK=2wFB", "1D8v8e", "q5nd8pz1vn7", "i4FhF9Mn8vv",
+    "kGRBUe", "k9z4B58", "ZCooF+7", "ahfxa6fA", "Y1g31pRXByB", "q5WYZ1yZZFe",
+    "i/8sidW5idW", "QEKbQ5zWQ9K", "PpfzFqVn2wZ", "u/Rsjw0fLdH", "wnW5uon+kIB",
+    "PCMSUIV47he", "advojIz4uIz", "Une1Onor8H8", "w+8Tu60jYhg", "Ueu6w4nuwwW",
+    "IK3YwKKOIKW", "VHnj2Mu4P5z", "Ppzc/1FCFFg", "hhvuUCuoVne", "UhcfZ1R6",
+    "Q5fWZCc=On", "jn3O1I37Y5H", "ud8KjEnre27", "QhsbZqoUOH", "/ufRvsyI/d4",
+    "auyoFGeFFC7", "V5oMqdxA8C3", "ZCPgan", "O/Rr", "k202j9Wy7E4",
+    "e2eFL1nxew4", "8qF+ZBih=zz", "LMux/p4pjMW", "B9vQupRfwoW", "aCsrQ5sXaK",
+    "ueBKjeg+2Dn", "FFkF2BWA", "unZPdHva", "a1fW=n", "isHxBH8lRH7", "Y6nNQK",
+    "U6cgT1c0Ue", "uPRa6K",
+]
+
+
+def _pe_b_decode(text, key_byte):
+    """Decode one base64 fragment of pe.js's table (mirror of JS B.mV).
+
+    Each character is mapped through the mangled lookup table ``a``
+    (``a.index(23 ^ ord(ch))``), accumulated as 6-bit groups, then every
+    output byte is XORed with ``key_byte``.  Verified byte-for-byte against
+    the real pe.js string table.
+    """
+    alpha = [int(_PE_HEX_PREFIX[i:i + 2], 16) for i in range(0, len(_PE_HEX_PREFIX), 2)]
+    out = bytearray()
+    val = 0
+    u = 0
+    for ch in text:
+        try:
+            idx = alpha.index(23 ^ ord(ch))
+        except ValueError:
+            break
+        val = (val << 6) | idx
+        u += 1
+        if u % 4 == 0:
+            for b in range(3):
+                out.append(((val >> (16 - 8 * b)) & 0xFF) ^ key_byte)
+            val = 0
+    rem = u % 4
+    if rem:
+        for b in range(rem - 1):
+            out.append(((val >> (rem * 6 - 8 - 8 * b)) & 0xFF) ^ key_byte)
+    return bytes(out)
+
+
+def aliyun_pe_decode(index, key_byte):
+    """Return pe.js string-table entry ``index`` decoded with ``key_byte``."""
+    return _pe_b_decode(_PE_ARRAY[index], key_byte).decode('utf-8', 'replace')
+
+
+def aliyun_pe_decoder_selftest():
+    """Confirm the decoder reproduces pe.js's exported constants."""
+    # p(t, n) == B(t - 3, n): the key module's macro.
+    def p(t, n_):
+        return aliyun_pe_decode(t - 3, n_)
+
+    api_version = p(14, 7) + "05"
+    assert api_version == "2023-03-05", f"API version mismatch: {api_version!r}"
+    web_key = "".join(p(x, y) for x, y in [
+        (38, 97), (16, 32), (44, 96), (13, 57), (41, 31), (49, 70)])
+    assert web_key == PE_CAPTCHA_KEYS["WEB_AES_SECRET_KEY"], web_key
+    # de() matches what a browser-run SDK produced for InitCaptcha:
+    sample_plain = "W.10001.c#saf-captcha#1r7eif79x#captcha-normal#undefined#cn"
+    sample_cipher = ("V0z3lM83c/TjjZu6HWeg97uPMhsuAUWj6W1AUm8Q2FRSr2gF4wC8Htz"
+                     "blzQ1zt3o8RDQiWUVckJC/G79CU2otQ==")
+    assert aliyun_captcha_encrypt(sample_plain, PE_FLAG_KEY) == sample_cipher
+    return True
+
+
 if __name__ == "__main__":
-    # Camoufox must create fresh AWSC values in a real browser context.
-    # Keep the browser-derived values in memory for the subsequent request
-    # sequence; do not reuse the values from ali_vcode.txt.
-    browser_values = get_camoufox_captcha_session()
-    # print(json.dumps(browser_values, ensure_ascii=False))
-    solve_captcha(browser_values['device_token'])
+    if os.environ.get("PE_SELFTEST"):
+        print("pe.js crypto selftest:", "PASS" if aliyun_pe_decoder_selftest() else "FAIL")
+        sys.exit(0)
+    # Camoufox is used only once, at the beginning, to obtain fresh browser
+    # values. All subsequent HTTP requests use requests.Session.
+    values = get_camoufox_captcha_session(
+        headless=os.environ.get("QODER_HEADLESS", "1") != "0"
+    )
+    if os.environ.get("ANALYZE_PE_JS"):
+        print(json.dumps(analyze_pe_script(), ensure_ascii=False, indent=2))
+    print(json.dumps(register_requests_only(values), ensure_ascii=False, indent=2))
