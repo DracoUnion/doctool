@@ -471,6 +471,56 @@ def upload_log(log: Mapping[str, Any]) -> dict[str, Any]:
     return response.json()
 
 
+def aliyun_verify_param_v3(*, certify_id: str, scene_id: str,
+                           security_token: str) -> str:
+    """Build the CaptchaVerifyParam a 3.0 SDK hands to the business caller.
+
+    pe.js's ``onBizSuccess`` (verifyType ``"3.0"``) wraps the slider result
+    in a base64 JSON envelope — NOT in a ``{sceneId, certifyId,
+    deviceToken, data}`` structure:
+
+        window.btoa(JSON.stringify({
+            certifyId: <captchaResult>,
+            sceneId: this.config.SceneId,
+            isSign: true,
+            securityToken: this.config.securityToken
+        }))
+
+    ``certify_id`` is the slider-captcha result returned by the SDK and
+    ``security_token`` comes from the InitCaptcha response.  The drag
+    trajectory/timestamps are consumed internally by the SDK to decide the
+    slide succeeded; they do not appear in this JSON in cleartext.
+    """
+    payload = {
+        "certifyId": certify_id,
+        "sceneId": scene_id,
+        "isSign": True,
+        "securityToken": security_token,
+    }
+    ascii_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+    return base64.b64encode(ascii_json.encode("latin-1")).decode()
+
+
+def aliyun_verify_param_v2(*, scene_id: str, certify_id: str,
+                           device_token: str, failover: str = "T") -> str:
+    """Build the CaptchaVerifyParam a 2.x SDK hands to the business caller.
+
+    Old AliyunCaptcha's slider-verify callback passes exactly this JSON:
+
+        JSON{ sceneId, certifyId, deviceToken, failover }
+
+    where ``failover`` is the constant ``"T"``.  This is the payload the
+    page forwards to VerifyCaptchaV3 when it drives the RPC directly.
+    """
+    payload = {
+        "sceneId": scene_id,
+        "certifyId": certify_id,
+        "deviceToken": device_token,
+        "failover": failover,
+    }
+    return json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+
+
 def verify_captcha(*, scene_id: str, certify_id: str, device_token: str,
                    dynamic_data: str, access_key_id: str,
                    access_key_secret: str) -> dict[str, Any]:
