@@ -1,5 +1,6 @@
 from os import path
 import os
+import traceback
 import json
 import requests
 import time
@@ -92,6 +93,103 @@ def del_repo(ow, repo):
     else:
         return {'code': r.status_code, 'msg': r.text}
 
+def imp_gh_repo_retry(*args, **kw):
+    retry = kw.pop('retry', 10)
+    for i in range(retry):
+        try:
+            return imp_gh_repo(*args, **kw)
+        except KeyboardInterrupt:
+            raise
+        except:
+            traceback.print_exc()
+            if i == retry - 1:
+                raise
+
+def imp_gh_repo(page, i, ow, name, exi_repos, gh_repos, gh_org, key):
+    if name in exi_repos: return
+    if name == 'home': return
+    imp_url = f'https://oauth2:{key}@github.com/{gh_org}/{name}.git'
+    print(f'[{i+1}/{len(gh_repos)}] {ow}/{name} {imp_url}')
+
+    page.goto('https://gitcode.com/create/migrate?type=3')
+    try:
+        page.wait_for_load_state('networkidle', timeout=15000)
+    except Exception:
+        pass
+    imp_url_text = '#app > div > div.gc-base-layout-content > div > div > div > div > div > div > div > div:nth-child(2) > form > div.mt-\[16px\].mb-\[16px\].font-\[none\].max-md\:mt-\[16px\] > div.mt-\[16px\].max-md\:mt-\[16px\].font-normal > form > div:nth-child(1) > div > div.devui-form__control-container.devui-form__control-container--horizontal > div > div > input'
+    page.locator(imp_url_text).wait_for(state='attached', timeout=20000)
+    page.evaluate(
+        '''([sel, val]) => {
+            var el = document.querySelector(sel);
+            el.value = val;
+            el.dispatchEvent(new Event('input', {bubbles: true}))
+        }''',
+        [imp_url_text, imp_url],
+    )
+    name_text = '#app > div > div.gc-base-layout-content > div > div > div > div > div > div > div > div:nth-child(2) > form > div.mt-\[16px\].mb-\[16px\].font-\[none\].max-md\:mt-\[16px\] > div.mt-\[16px\].max-md\:mt-\[16px\].font-normal > form > div:nth-child(3) > div > div.devui-form__control-container.devui-form__control-container--horizontal > div > div > input'
+    page.locator(name_text).wait_for(state='attached', timeout=20000)
+    page.evaluate(
+        '''([sel, val]) => {
+            var el = document.querySelector(sel);
+            el.value = val;
+            el.dispatchEvent(new Event('input', {bubbles: true}))
+        }''',
+        [name_text, name],
+    )
+    ow_text = '.devui-editable-select-input__inner'
+    page.locator(ow_text).wait_for(state='attached', timeout=20000)
+    page.evaluate('''
+        ([sel, text]) => {
+            var el = document.querySelector(sel)
+            el.click()
+            el.value = text
+            el.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }))
+        }
+    ''', [ow_text, ow])
+    time.sleep(1)
+    ow_dropdown = 'li.devui-editable-select__item:nth-child(2)'
+    page.locator(ow_dropdown).wait_for(state='attached', timeout=20000)
+    page.evaluate('(sel) => document.querySelector(sel).click()', ow_dropdown)
+    repo_name_text = 'div.devui-input:nth-child(3) > div:nth-child(1) > input:nth-child(1)'
+    page.locator(repo_name_text).wait_for(state='attached', timeout=20000)
+    page.evaluate(
+        '''([sel, val]) => {
+            var el = document.querySelector(sel);
+            el.value = val;
+            el.dispatchEvent(new Event('input', {bubbles: true}))
+        }''',
+        [repo_name_text, name],
+    )
+    page.evaluate(
+        '(sel) => document.querySelector(sel).click()',
+        '.devui-radio-group > div:nth-child(1) > label:nth-child(1) > input:nth-child(1)',
+    )
+    page.evaluate(
+        '(sel) => document.querySelector(sel).click()',
+        'div.repo-import-checkbox:nth-child(2) > div:nth-child(1) > label:nth-child(2) > span:nth-child(3)',
+    )
+
+    print('等待提交按钮启用')
+    page.evaluate('() => window.scrollTo(0, document.body.scrollHeight)')
+    sub_btn_sele = 'button.devui-button.devui-button--solid.devui-button--solid--primary.devui-button--md.bg-B500.ml-2'
+    page.wait_for_function(
+        '''(sel) => {
+            const el = document.querySelector(sel);
+            return el && !el.disabled && !el.getAttribute('aria-disabled');
+        }''',
+        arg=sub_btn_sele,
+        timeout=20000,
+    )
+    print('提交按钮启用')
+    for i in range(10):
+        print(f'点击提交 #{i+1}')
+        page.evaluate('(sel) => document.querySelector(sel).click()', sub_btn_sele)
+        try:
+            page.wait_for_url(lambda u: 'migrate' not in u, timeout=5000)
+        except Exception:
+            pass
+        if 'migrate' not in page.url: break
+
 def import_gh_repos(ow, gh_org):
     fname = f'{gh_org}_repos.json'
     key = os.environ.get("GH_TOKEN", '')
@@ -107,7 +205,7 @@ def import_gh_repos(ow, gh_org):
 
 
     cookie_fname = 'gitcode_cookies.json'
-    with camou_create_driver(headless=True) as (cam, ctx, page):
+    with camou_create_driver(headless=False) as (cam, ctx, page):
         if path.isfile(cookie_fname):
             print('导入Cookie')
             page.goto('https://gitcode.com')
@@ -132,89 +230,11 @@ def import_gh_repos(ow, gh_org):
             open(cookie_fname, 'w', encoding='utf8').write(json.dumps(cookies))
 
         for i, name in enumerate(gh_repos):
-            if name in exi_repos: continue
-            if name == 'home': continue
-            imp_url = f'https://oauth2:{key}@github.com/{gh_org}/{name}.git'
-            print(f'[{i+1}/{len(gh_repos)}] {ow}/{name} {imp_url}')
-
-            page.goto('https://gitcode.com/create/migrate?type=3')
-            try:
-                page.wait_for_load_state('networkidle', timeout=15000)
-            except Exception:
-                pass
-            imp_url_text = '#app > div > div.gc-base-layout-content > div > div > div > div > div > div > div > div:nth-child(2) > form > div.mt-\[16px\].mb-\[16px\].font-\[none\].max-md\:mt-\[16px\] > div.mt-\[16px\].max-md\:mt-\[16px\].font-normal > form > div:nth-child(1) > div > div.devui-form__control-container.devui-form__control-container--horizontal > div > div > input'
-            page.locator(imp_url_text).wait_for(state='attached', timeout=20000)
-            page.evaluate(
-                '''([sel, val]) => {
-                    var el = document.querySelector(sel);
-                    el.value = val;
-                    el.dispatchEvent(new Event('input', {bubbles: true}))
-                }''',
-                [imp_url_text, imp_url],
+            imp_gh_repo_retry(
+                page, i, ow, name, 
+                exi_repos, gh_repos,
+                gh_org, key,
             )
-            name_text = '#app > div > div.gc-base-layout-content > div > div > div > div > div > div > div > div:nth-child(2) > form > div.mt-\[16px\].mb-\[16px\].font-\[none\].max-md\:mt-\[16px\] > div.mt-\[16px\].max-md\:mt-\[16px\].font-normal > form > div:nth-child(3) > div > div.devui-form__control-container.devui-form__control-container--horizontal > div > div > input'
-            page.locator(name_text).wait_for(state='attached', timeout=20000)
-            page.evaluate(
-                '''([sel, val]) => {
-                    var el = document.querySelector(sel);
-                    el.value = val;
-                    el.dispatchEvent(new Event('input', {bubbles: true}))
-                }''',
-                [name_text, name],
-            )
-            ow_text = '.devui-editable-select-input__inner'
-            page.locator(ow_text).wait_for(state='attached', timeout=20000)
-            page.evaluate('''
-                ([sel, text]) => {
-                    var el = document.querySelector(sel)
-                    el.click()
-                    el.value = text
-                    el.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }))
-                }
-            ''', [ow_text, ow])
-            time.sleep(1)
-            ow_dropdown = 'li.devui-editable-select__item:nth-child(2)'
-            page.locator(ow_dropdown).wait_for(state='attached', timeout=20000)
-            page.evaluate('(sel) => document.querySelector(sel).click()', ow_dropdown)
-            repo_name_text = 'div.devui-input:nth-child(3) > div:nth-child(1) > input:nth-child(1)'
-            page.locator(repo_name_text).wait_for(state='attached', timeout=20000)
-            page.evaluate(
-                '''([sel, val]) => {
-                    var el = document.querySelector(sel);
-                    el.value = val;
-                    el.dispatchEvent(new Event('input', {bubbles: true}))
-                }''',
-                [repo_name_text, name],
-            )
-            page.evaluate(
-                '(sel) => document.querySelector(sel).click()',
-                '.devui-radio-group > div:nth-child(1) > label:nth-child(1) > input:nth-child(1)',
-            )
-            page.evaluate(
-                '(sel) => document.querySelector(sel).click()',
-                'div.repo-import-checkbox:nth-child(2) > div:nth-child(1) > label:nth-child(2) > span:nth-child(3)',
-            )
-
-            print('等待提交按钮启用')
-            page.evaluate('() => window.scrollTo(0, document.body.scrollHeight)')
-            sub_btn_sele = 'button.devui-button.devui-button--solid.devui-button--solid--primary.devui-button--md.bg-B500.ml-2'
-            page.wait_for_function(
-                '''(sel) => {
-                    const el = document.querySelector(sel);
-                    return el && !el.disabled && !el.getAttribute('aria-disabled');
-                }''',
-                arg=sub_btn_sele,
-                timeout=20000,
-            )
-            print('提交按钮启用')
-            for i in range(10):
-                print(f'点击提交 #{i+1}')
-                page.evaluate('(sel) => document.querySelector(sel).click()', sub_btn_sele)
-                try:
-                    page.wait_for_url(lambda u: 'migrate' not in u, timeout=5000)
-                except Exception:
-                    pass
-                if 'migrate' not in page.url: break
         
 
 '''
