@@ -93,14 +93,21 @@ def del_repo(ow, repo):
         return {'code': r.status_code, 'msg': r.text}
 
 def import_gh_repos(ow, gh_org):
-    gh_repos = json.loads(open('dracounion_repos.json', encoding='utf8').read())
+    fname = f'{gh_org}_repos.json'
+    key = os.environ.get("GH_TOKEN", '')
+    if not path.isfile(fname):
+        repos = get_gh_org_repos(gh_org, key)
+        open(fname, 'w', encoding='utf8').write(
+            json.dumps(repos))
+    gh_repos = json.loads(open(f'{gh_org}_repos.json', encoding='utf8').read())
     print(gh_repos)
+
     exi_repos = set(get_org_repos(ow))
     key = os.environ.get("GH_TOKEN", '')
 
 
     cookie_fname = 'gitcode_cookies.json'
-    with camou_create_driver(headless=False) as (cam, ctx, page):
+    with camou_create_driver(headless=True) as (cam, ctx, page):
         if path.isfile(cookie_fname):
             print('导入Cookie')
             page.goto('https://gitcode.com')
@@ -217,12 +224,6 @@ def del_org_priv_repos(ow):
 
 def main():
     # del_org_priv_repos('opendoccn1')
-    fname = 'dracounion_repos.json'
-    key = os.environ.get("GH_TOKEN", '')
-    if not path.isfile(fname):
-        repos = get_gh_org_repos('dracounion', key)
-        open(fname, 'w', encoding='utf8').write(
-            json.dumps(repos))
-    import_gh_repos('dracounion1', 'dracounion')
+    import_gh_repos('CyberCommy1', 'CyberCommy')
 
 if __name__ == '__main__': main()
