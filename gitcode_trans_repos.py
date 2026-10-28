@@ -172,6 +172,7 @@ def import_gh_repos(ow, gh_org):
                     el.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }))
                 }
             ''', [ow_text, ow])
+            time.sleep(1)
             ow_dropdown = 'li.devui-editable-select__item:nth-child(2)'
             page.locator(ow_dropdown).wait_for(state='attached', timeout=20000)
             page.evaluate('(sel) => document.querySelector(sel).click()', ow_dropdown)
