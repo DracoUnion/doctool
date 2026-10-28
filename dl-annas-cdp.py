@@ -54,6 +54,7 @@ selectors = {
     'captcha_img': 'img.ddg-modal__captcha-image',
     'captcha_btn': 'button.ddg-modal__submit',
     'captcha_tb': 'input.ddg-modal__input',
+    'captcha_load_img': 'img#ddg-img-loading',
 }
 
 _DDOS_DETECT_JS = """(() => {
@@ -100,7 +101,7 @@ def preprocess_captcha(img_data):
 
 def recognize_captcha(img_data):
     # 初始化 OCR，开启新版模型并指定模型下载目录
-    ocr = ddddocr.DdddOcr(old=False)
+    ocr = ddddocr.DdddOcr(old=False, show_ad=False)
 
     # 限定可能出现的字母数字范围（如纯小写字母或指定数字），减少同类字符误判
     # 例如：若目标只含字母和数字，可设为 "abcdefghijklmnopqrstuvwxyz0123456789"
@@ -174,11 +175,9 @@ def wait_for_captcha_clear(page: CdpPage, el_chk: str, timeout_ms=600_000):
             (() => {{
                 const iframe = document.querySelector("{selectors['captcha_iframe']}");
                 if (!iframe) return false;
-                const style = window.getComputedStyle(iframe);
-                alert(style);
-                // const innerDoc = iframe.contentDocument || iframe.contentWindow.document;
-                // return !!innerDoc.querySelector("{selectors['captcha_img']}");
-                return !(style.display === 'none' || style.visibility === 'hidden')
+                const iframeStyle = window.getComputedStyle(iframe);
+                // alert(iframeStyle.display)
+                return iframeStyle.display !== 'none'
             }})()
         ''')
         print(f'has_captcha: {has_captcha}')
