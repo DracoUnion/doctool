@@ -107,7 +107,7 @@ def import_gh_repos(ow, gh_org):
 
 
     cookie_fname = 'gitcode_cookies.json'
-    with camou_create_driver(headless=False) as (cam, ctx, page):
+    with camou_create_driver(headless=True) as (cam, ctx, page):
         if path.isfile(cookie_fname):
             print('导入Cookie')
             page.goto('https://gitcode.com')
