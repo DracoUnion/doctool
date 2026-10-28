@@ -149,41 +149,29 @@ def wait_for_captcha_clear(page: CdpPage, el_chk: str, timeout_ms=600_000):
         }})()
     ''')
     time.sleep(1)
-    while True:
-        print(f'等待验证码图片加载...')
-        page.wait_for_iframe_selector(
-            selectors['captcha_iframe'], 
-            selectors['captcha_img'],
-        )
-        img_url = wait_for_captcha_img(page)
-        print('img_url: ' + img_url[:50] + '...')
-        img_data = img_url[len('data:image/png;base64,'):]
-        img_data = base64.b64decode(img_data)
-        res = recognize_captcha(img_data)
-        print(f'识别结果：{res}')
-        print('提交验证码...')
-        page.evaluate(f'''
-            (() => {{
-                const iframe = document.querySelector("{selectors['captcha_iframe']}");
-                const innerDoc = iframe.contentDocument || iframe.contentWindow.document;
-                innerDoc.querySelector("{selectors["captcha_tb"]}").value = {json.dumps(res)};
-                innerDoc.querySelector("{selectors["captcha_btn"]}").click();
-            }})()
-        ''')
-        time.sleep(3)
-        has_captcha = page.evaluate(f'''
-            (() => {{
-                const iframe = document.querySelector("{selectors['captcha_iframe']}");
-                if (!iframe) return false;
-                // const iframeStyle = window.getComputedStyle(iframe);
-                // alert(iframe.style.display)
-                return iframe.style.display !== 'none'
-            }})()
-        ''')
-        print(f'has_captcha: {has_captcha}')
-        if not has_captcha: 
-            print('识别成功')
-            break
+    print(f'等待验证码图片加载...')
+    page.wait_for_iframe_selector(
+        selectors['captcha_iframe'], 
+        selectors['captcha_img'],
+    )
+    img_url = wait_for_captcha_img(page)
+    print('img_url: ' + img_url[:50] + '...')
+    img_data = img_url[len('data:image/png;base64,'):]
+    img_data = base64.b64decode(img_data)
+    res = recognize_captcha(img_data)
+    print(f'识别结果：{res}')
+    print('提交验证码...')
+    page.evaluate(f'''
+        (() => {{
+            const iframe = document.querySelector("{selectors['captcha_iframe']}");
+            const innerDoc = iframe.contentDocument || iframe.contentWindow.document;
+            innerDoc.querySelector("{selectors["captcha_tb"]}").value = {json.dumps(res)};
+            innerDoc.querySelector("{selectors["captcha_btn"]}").click();
+        }})()
+    ''')
+    time.sleep(3)
+    page.reload()
+
 
 
 
@@ -194,7 +182,7 @@ def cdp_get_html(page: CdpPage, url: str, el_chk: str = None,
                  ddos_timeout_ms=600_000, label='', headless=False) -> str:
     """导航页面，必要时等待用户完成 DDoS-Guard 人工验证。"""
     page.goto(url)
-    if is_captcha_challenge(page, el_chk):
+    while is_captcha_challenge(page, el_chk):
         wait_for_captcha_clear(page, el_chk, ddos_timeout_ms)
     if el_chk:
         page.wait_for_selector(el_chk)
