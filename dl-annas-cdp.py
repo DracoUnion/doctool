@@ -171,7 +171,9 @@ def wait_for_ddos_clear(page: CdpPage, el_chk: str, timeout_ms=600_000):
         has_captcha = page.evaluate(f'''
             !!document.querySelector("{selectors['captcha_iframe']}");
         ''')
-        if not has_captcha: break
+        if not has_captcha: 
+            print('识别成功')
+            break
 
 
 
