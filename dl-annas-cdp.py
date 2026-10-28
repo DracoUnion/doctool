@@ -26,6 +26,7 @@ import base64
 import sys
 import time
 import traceback
+import string
 
 from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
@@ -99,11 +100,11 @@ def preprocess_captcha(img_data):
 
 def recognize_captcha(img_data):
     # 初始化 OCR，开启新版模型并指定模型下载目录
-    ocr = ddddocr.DdddOcr(old=False, model_dir="./models")
+    ocr = ddddocr.DdddOcr(old=False)
 
     # 限定可能出现的字母数字范围（如纯小写字母或指定数字），减少同类字符误判
     # 例如：若目标只含字母和数字，可设为 "abcdefghijklmnopqrstuvwxyz0123456789"
-    # ocr.set_ranges("abcdefghijklmnopqrstuvwxyz0123456789")
+    ocr.set_ranges(string.ascii_letters + string.digits)
 
     processed_bytes = preprocess_captcha(img_data)
 
@@ -115,27 +116,8 @@ def is_ddos_challenge(page: CdpPage, el_chk: str):
     page.wait_for_selector(selectors['captcha_iframe'] + ', ' + el_chk)
     return bool(page.evaluate(_DDOS_DETECT_JS))
 
-def wait_for_ddos_clear(page: CdpPage, el_chk: str, timeout_ms=600_000):
-    """等待用户在可见 Chrome 窗口中完成人工验证。"""
-    # self.send('Page.bringToFront', timeout_ms=10_000)
-    print(f'等待验证码模块加载...')
-    page.wait_for_iframe_selector(
-        selectors['captcha_iframe'], 
-        selectors['captcha_div'],
-    )
-    print(f'点击人机验证按钮...')
-    page.evaluate(f'''
-        (() => {{
-            const iframe = document.querySelector("{selectors['captcha_iframe']}");
-            const innerDoc = iframe.contentDocument || iframe.contentWindow.document;
-            innerDoc.querySelector("{selectors["captcha_div"]}").click();
-        }})()
-    ''')
-    print(f'等待验证码图片加载...')
-    page.wait_for_iframe_selector(
-        selectors['captcha_iframe'], 
-        selectors['captcha_img'],
-    )
+
+def wait_for_captcha_img(page: CdpPage):
     while True:
         img_url = page.evaluate(f'''
             (() => {{
@@ -145,14 +127,47 @@ def wait_for_ddos_clear(page: CdpPage, el_chk: str, timeout_ms=600_000):
             }})()
         ''')
         if img_url.startswith('data:'):
-            break
+            return img_url
         time.sleep(0.5)
-    print('img_url: ' + img_url)
-    img_data = img_url[len('data:image/png;base64,'):]
-    img_data = base64.b64decode(img_data)
-    res = recognize_captcha(img_data)
-    print(f'识别结果：{res}')
-    time.sleep(50000)
+
+def wait_for_ddos_clear(page: CdpPage, el_chk: str, timeout_ms=600_000):
+    """等待用户在可见 Chrome 窗口中完成人工验证。"""
+    # self.send('Page.bringToFront', timeout_ms=10_000)
+    print(f'等待验证码模块加载...')
+    page.wait_for_iframe_selector(
+        selectors['captcha_iframe'], 
+        selectors['captcha_div'],
+    )
+    time.sleep(1)
+    print(f'点击人机验证按钮...')
+    page.evaluate(f'''
+        (() => {{
+            const iframe = document.querySelector("{selectors['captcha_iframe']}");
+            const innerDoc = iframe.contentDocument || iframe.contentWindow.document;
+            innerDoc.querySelector("{selectors["captcha_div"]}").click();
+        }})()
+    ''')
+    while True:
+        print(f'等待验证码图片加载...')
+        page.wait_for_iframe_selector(
+            selectors['captcha_iframe'], 
+            selectors['captcha_img'],
+        )
+        img_url = wait_for_captcha_img(page)
+        print('img_url: ' + img_url)
+        img_data = img_url[len('data:image/png;base64,'):]
+        img_data = base64.b64decode(img_data)
+        res = recognize_captcha(img_data)
+        print(f'识别结果：{res}')
+        page.evaluate(f'''
+            (() => {{
+                const iframe = document.querySelector("{selectors['captcha_iframe']}");
+                const innerDoc = iframe.contentDocument || iframe.contentWindow.document;
+                innerDoc.querySelector("{selectors["captcha_tb"]}").value = {json.dumps(res)};
+                innerDoc.querySelector("{selectors["captcha_btn"]}").click();
+            }})()
+        ''')
+        time.sleep(1)
 
 
 
@@ -182,8 +197,6 @@ def cdp_get_html_retry(page: CdpPage, url: str, el_chk: str = None, retry: int =
             traceback.print_exc()
             if i == retry - 1:
                 raise
-            if not page.is_ddos_challenge():
-                page.reload()
 
 
 def tr_download_safe(args):
