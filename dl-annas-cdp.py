@@ -26,10 +26,14 @@ import base64
 import sys
 import time
 import traceback
+
 from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 from urllib.parse import quote_plus
 
+import cv2
+import numpy as np
+import ddddocr
 import tqdm
 from pyquery import PyQuery as pq
 from BookerDownloadTool.util import to_kebab, request_retry, fname_escape
@@ -58,49 +62,97 @@ _DDOS_DETECT_JS = """(() => {
            !!document.querySelector('#ddg-captcha, #ddg-iframe, #request-info');
 })()"""
 
+def preprocess_captcha(img_data):
+    # 1. 读取图像
+    img = cv2.imdecode(
+        np.frombuffer(img_data, np.uint8),
+        cv2.IMREAD_COLOR,
+    )
+    
+    # 2. 裁剪边缘（去除可能存在的外边框干扰，建议按需留出 2px 边距）
+    h, w = img.shape[:2]
+    img_cropped = img[2:h-2, 2:w-2]
+
+    # 3. 灰度化
+    gray = cv2.cvtColor(img_cropped, cv2.COLOR_BGR2GRAY)
+
+    # 4. 滤波降噪（中值滤波保护边缘）
+    blurred = cv2.medianBlur(gray, 3)
+
+    # 5. 自适应二值化（应对不均匀光照，抗干扰能力更强）
+    # blockSize 可依据字符像素粗细在 11~31 间微调
+    thresh = cv2.adaptiveThreshold(
+        blurred, 255, 
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+        cv2.THRESH_BINARY_INV, 15, 8
+    )
+
+    # 6. 形态学开运算（断开图中细小的红紫干扰线）
+    kernel = np.ones((2, 2), np.uint8)
+    processed = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+
+    # 7. 编码为字节流供 ddddocr 使用
+    is_success, buffer = cv2.imencode(".png", processed)
+    if not is_success:
+        return None
+    return buffer.tobytes()
+
+def recognize_captcha(img_data):
+    # 初始化 OCR，开启新版模型并指定模型下载目录
+    ocr = ddddocr.DdddOcr(old=False, model_dir="./models")
+
+    # 限定可能出现的字母数字范围（如纯小写字母或指定数字），减少同类字符误判
+    # 例如：若目标只含字母和数字，可设为 "abcdefghijklmnopqrstuvwxyz0123456789"
+    # ocr.set_ranges("abcdefghijklmnopqrstuvwxyz0123456789")
+
+    processed_bytes = preprocess_captcha(img_data)
+
+    # 执行识别
+    result = ocr.classification(processed_bytes)
+    return result
+
 def is_ddos_challenge(page: CdpPage, el_chk: str):
     page.wait_for_selector(selectors['captcha_iframe'] + ', ' + el_chk)
     return bool(page.evaluate(_DDOS_DETECT_JS))
 
-def wait_for_ddos_clear(page: CdpPage, label='', timeout_ms=600_000):
+def wait_for_ddos_clear(page: CdpPage, el_chk: str, timeout_ms=600_000):
     """等待用户在可见 Chrome 窗口中完成人工验证。"""
     # self.send('Page.bringToFront', timeout_ms=10_000)
+    print(f'等待验证码模块加载...')
     page.wait_for_iframe_selector(
         selectors['captcha_iframe'], 
         selectors['captcha_div'],
     )
+    print(f'点击人机验证按钮...')
     page.evaluate(f'''
         (() => {{
             const iframe = document.querySelector("{selectors['captcha_iframe']}");
             const innerDoc = iframe.contentDocument || iframe.contentWindow.document;
-            innerDoc.querySelector("{selectors["captcha_cb"]}").click();
+            innerDoc.querySelector("{selectors["captcha_div"]}").click();
         }})()
     ''')
-    print(
-        f'[DDoS-Guard] 检测到人工验证（{label or page.target_id}）。'
-        '请在 Chrome 窗口中完成验证；完成后将自动继续。'
-    )
+    print(f'等待验证码图片加载...')
     page.wait_for_iframe_selector(
         selectors['captcha_iframe'], 
         selectors['captcha_img'],
     )
-    time.sleep(2)
-    img_url = page.evaluate(f'''
-        (() => {{
-            const iframe = document.querySelector("{selectors['captcha_iframe']}");
-            const innerDoc = iframe.contentDocument || iframe.contentWindow.document;
-            return innerDoc.querySelector("{selectors["captcha_img"]}").src;
-        }})()
-    ''')
-    assert img_url.startswith('data:')
+    while True:
+        img_url = page.evaluate(f'''
+            (() => {{
+                const iframe = document.querySelector("{selectors['captcha_iframe']}");
+                const innerDoc = iframe.contentDocument || iframe.contentWindow.document;
+                return innerDoc.querySelector("{selectors["captcha_img"]}").src;
+            }})()
+        ''')
+        if img_url.startswith('data:'):
+            break
+        time.sleep(0.5)
     print('img_url: ' + img_url)
     img_data = img_url[len('data:image/png;base64,'):]
     img_data = base64.b64decode(img_data)
+    res = recognize_captcha(img_data)
+    print(f'识别结果：{res}')
     time.sleep(50000)
-    raise SystemError(
-        f'DDoS-Guard 人工验证超时（{timeout_ms / 1000:.0f}s）：'
-        f'{label or page.target_id}'
-    )
 
 
 
@@ -112,7 +164,7 @@ def cdp_get_html(page: CdpPage, url: str, el_chk: str = None,
     """导航页面，必要时等待用户完成 DDoS-Guard 人工验证。"""
     page.goto(url)
     if is_ddos_challenge(page, el_chk):
-        wait_for_ddos_clear(page, label or url, ddos_timeout_ms)
+        wait_for_ddos_clear(page, el_chk, ddos_timeout_ms)
     if el_chk:
         page.wait_for_selector(el_chk)
     return page.html()
