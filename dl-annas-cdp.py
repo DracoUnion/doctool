@@ -147,6 +147,7 @@ def wait_for_captcha_clear(page: CdpPage, el_chk: str, timeout_ms=600_000):
             innerDoc.querySelector("{selectors["captcha_div"]}").click();
         }})()
     ''')
+    time.sleep(1)
     while True:
         print(f'等待验证码图片加载...')
         page.wait_for_iframe_selector(
@@ -159,6 +160,7 @@ def wait_for_captcha_clear(page: CdpPage, el_chk: str, timeout_ms=600_000):
         img_data = base64.b64decode(img_data)
         res = recognize_captcha(img_data)
         print(f'识别结果：{res}')
+        print('提交验证码...')
         page.evaluate(f'''
             (() => {{
                 const iframe = document.querySelector("{selectors['captcha_iframe']}");
@@ -167,10 +169,19 @@ def wait_for_captcha_clear(page: CdpPage, el_chk: str, timeout_ms=600_000):
                 innerDoc.querySelector("{selectors["captcha_btn"]}").click();
             }})()
         ''')
-        time.sleep(1)
+        time.sleep(3)
         has_captcha = page.evaluate(f'''
-            !!document.querySelector("{selectors['captcha_iframe']}");
+            (() => {{
+                const iframe = document.querySelector("{selectors['captcha_iframe']}");
+                if (!iframe) return false;
+                const style = window.getComputedStyle(iframe);
+                alert(style);
+                // const innerDoc = iframe.contentDocument || iframe.contentWindow.document;
+                // return !!innerDoc.querySelector("{selectors['captcha_img']}");
+                return !(style.display === 'none' || style.visibility === 'hidden')
+            }})()
         ''')
+        print(f'has_captcha: {has_captcha}')
         if not has_captcha: 
             print('识别成功')
             break
@@ -208,6 +219,8 @@ def cdp_get_html_retry(page: CdpPage, url: str, el_chk: str = None, retry: int =
 def tr_download_safe(args):
     try:
         download_annas(args)
+    except KeyboardInterrupt:
+        raise
     except Exception:
         traceback.print_exc()
 
