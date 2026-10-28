@@ -94,6 +94,22 @@ class CdpError(RuntimeError):
     pass
 
 
+class DdosGuardError(RuntimeError):
+    """DDoS-Guard 验证需要人工完成。"""
+
+
+class DdosGuardHeadlessError(DdosGuardError):
+    """无头浏览器无法进行人工验证。"""
+
+
+_DDOS_DETECT_JS = """(() => {
+    const title = (document.title || '').toLowerCase();
+    const path = ((location.host || '') + (location.pathname || '')).toLowerCase();
+    return title.includes('ddos-guard') || path.includes('ddos-guard') ||
+           !!document.querySelector('#ddg-captcha, #ddg-iframe, #request-info');
+})()"""
+
+
 class CdpConnection:
     """一个同步的 CDP WebSocket 连接（请求/响应按 id 配对）。"""
 
@@ -147,7 +163,7 @@ class CdpConnection:
 class CdpPage:
     """绑定到单个 Chrome tab 的 CDP 会话，等价于原 annas.py 的 page 对象。"""
 
-    def __init__(self, cdp, session_id, target_id, proc=None, profile=None):
+    def __init__(self, cdp: CdpConnection, session_id, target_id, proc=None, profile=None):
         self.cdp = cdp
         self.session_id = session_id
         self.target_id = target_id
@@ -161,14 +177,18 @@ class CdpPage:
     # ── 页面操作 ──
 
     def evaluate(self, expression, timeout_ms=15_000):
-        res = self.send('Runtime.evaluate', {
-            'expression': expression,
-            'returnByValue': True,
-        }, timeout_ms=timeout_ms)
-        if res.get('exceptionDetails'):
-            raise CdpError(f'Runtime.evaluate 异常：'
-                           f'{json.dumps(res["exceptionDetails"], ensure_ascii=False)[:500]}')
-        return res.get('result', {}).get('value')
+        try:
+            res = self.send('Runtime.evaluate', {
+                'expression': expression,
+                'returnByValue': True,
+            }, timeout_ms=timeout_ms)
+            if res.get('exceptionDetails'):
+                raise CdpError(f'Runtime.evaluate 异常：'
+                            f'{json.dumps(res["exceptionDetails"], ensure_ascii=False)[:500]}')
+            return res.get('result', {}).get('value')
+        except:
+            traceback.print_exc()
+            return None
 
     def html(self) -> str:
         """等价于 page.content()。"""
@@ -190,11 +210,7 @@ class CdpPage:
         """等价于 wait_for_load_state('domcontentloaded')。"""
         deadline = time.time() + timeout_ms / 1000.0
         while time.time() < deadline:
-            try:
-                rs = self.evaluate('document.readyState')
-            except Exception:
-                time.sleep(0.2)
-                continue
+            rs = self.evaluate('document.readyState')
             if rs in ('interactive', 'complete'):
                 return True
             time.sleep(0.2)
@@ -206,13 +222,30 @@ class CdpPage:
         expr = f'!!document.querySelector({json.dumps(selector)})'
         deadline = time.time() + timeout_ms / 1000.0
         while time.time() < deadline:
-            try:
-                if self.evaluate(expr):
-                    return True
-            except Exception:
-                pass  # 页面正在跳转，继续轮询
+            if self.evaluate(expr):
+                return True
             time.sleep(0.5)
         raise TimeoutError(f'等待选择器超时（{timeout_ms}ms）：{selector}')
+
+    def is_ddos_challenge(self):
+        return bool(self.evaluate(_DDOS_DETECT_JS))
+
+    def wait_for_ddos_clear(self, label='', timeout_ms=600_000):
+        """等待用户在可见 Chrome 窗口中完成人工验证。"""
+        self.send('Page.bringToFront', timeout_ms=10_000)
+        deadline = time.time() + timeout_ms / 1000.0
+        print(
+            f'[DDoS-Guard] 检测到人工验证（{label or self.target_id}）。'
+            '请在 Chrome 窗口中完成验证；完成后将自动继续。'
+        )
+        while time.time() < deadline:
+            if not self.is_ddos_challenge():
+                return True
+            time.sleep(0.5)
+        raise DdosGuardError(
+            f'DDoS-Guard 人工验证超时（{timeout_ms / 1000:.0f}s）：'
+            f'{label or self.target_id}'
+        )
 
 
 # ─────────────────────────── Chrome 启动 / 清理 ───────────────────────────
@@ -349,20 +382,29 @@ def cdp_create_driver(headless=True, timeout_ms=60_000):
 
 # ─────────────────────────── 原 annas.py 的逻辑（仅替换 driver） ───────────────────────────
 
-def cdp_get_html(page, url: str, el_chk: str = None) -> str:
-    """等价于 plrt_get_html()：导航访问页面，等待验证通过后返回 HTML。"""
+def cdp_get_html(page: CdpPage, url: str, el_chk: str = None,
+                 ddos_timeout_ms=600_000, label='', headless=False) -> str:
+    """导航页面，必要时等待用户完成 DDoS-Guard 人工验证。"""
     page.goto(url)
+    if page.is_ddos_challenge():
+        page.wait_for_ddos_clear(label or url, ddos_timeout_ms)
     if el_chk:
-        # 最多等待 50 秒，比单纯等待 timeout 更智能
-        page.wait_for_selector(el_chk, timeout_ms=50_000)
+        deadline = time.time() + 50_000 / 1000.0
+        while time.time() < deadline:
+            if page.evaluate(f'!!document.querySelector({json.dumps(el_chk)})'):
+                return page.html()
+            time.sleep(0.5)
+        raise TimeoutError(f'等待选择器超时（50000ms）：{el_chk}')
     return page.html()
 
 
-def cdp_get_html_retry(page, url: str, el_chk: str = None, retry: int = 10) -> str:
+def cdp_get_html_retry(page, url: str, el_chk: str = None, retry: int = 10,
+                       ddos_timeout_ms=600_000, label='', headless=False) -> str:
     for i in range(retry):
         try:
-            page.reload()
-            return cdp_get_html(page, url, el_chk)
+            return cdp_get_html(page, url, el_chk, ddos_timeout_ms, label, headless)
+        except DdosGuardError:
+            raise
         except KeyboardInterrupt:
             raise
         except Exception:
@@ -370,6 +412,8 @@ def cdp_get_html_retry(page, url: str, el_chk: str = None, retry: int = 10) -> s
             traceback.print_exc()
             if i == retry - 1:
                 raise
+            if not page.is_ddos_challenge():
+                page.reload()
 
 
 def tr_download_safe(args):
@@ -420,7 +464,8 @@ def annas_fetch(args):
                 f'{qry_ext}{qry_cont}{qry_lang}{qry_yr}'
             )
             print(url)
-            html = cdp_get_html_retry(page, url, '.header-inner-top', args.retry)
+            html = cdp_get_html_retry(page, url, '.header-inner-top', args.retry,
+                                      args.ddos_timeout, f'search:{i}', args.headless)
             rt = pq(html)
             el_links = rt.find('a.text-lg[href^="/md5/"]')
             if not el_links:
@@ -443,7 +488,8 @@ def download_annas(args):
     with cdp_create_driver(args.headless) as page:
         hash_ = args.hash
         url = f'https://{HOST}/md5/{hash_}'
-        html = cdp_get_html_retry(page, url, '.text-gray-800', args.retry)
+        html = cdp_get_html_retry(page, url, '.text-gray-800', args.retry,
+                                  args.ddos_timeout, f'md5:{hash_}', args.headless)
         rt = pq(html)
         title = rt.find('div.font-semibold:nth-child(4)') \
             .text().strip().replace(' 🔍', '')
@@ -465,7 +511,8 @@ def download_annas(args):
         url = pq(random.choice(el_links_li)).children('a').attr('href')
         url = f'https://{HOST}{url}'
         # url = f'https://{HOST}/slow_download/{hash_}/0/{idx}'
-        html = cdp_get_html_retry(page, url, '.bg-gray-200', args.retry)
+        html = cdp_get_html_retry(page, url, '.bg-gray-200', args.retry,
+                                  args.ddos_timeout, f'slow:{hash_}', args.headless)
         rt = pq(html)
         link = rt.find('.bg-gray-200').eq(0).text().strip()
         r = request_retry('GET', link, headers=dft_hdr, stream=True,
@@ -516,6 +563,8 @@ def reg_subparser(subparsers):
     dl_annas_parser.add_argument("hash", help="文件哈希")
     dl_annas_parser.add_argument("-H", "--headless", action='store_true', help="无头模式")
     dl_annas_parser.add_argument("-r", "--retry", type=int, default=10, help="重试")
+    dl_annas_parser.add_argument("--ddos-timeout", type=int, default=600,
+                                 help="人工验证最长等待秒数")
     dl_annas_parser.set_defaults(func=download_annas)
 
     annas_batch_parser = subparsers.add_parser("annas-batch", help="下载文件")
@@ -525,6 +574,8 @@ def reg_subparser(subparsers):
                                     choices=['slow', 'bt', 'lgli'], help="站点")
     annas_batch_parser.add_argument("-st", "--start", type=int, default=0, help="起始")
     annas_batch_parser.add_argument("-r", "--retry", type=int, default=10, help="重试")
+    annas_batch_parser.add_argument("--ddos-timeout", type=int, default=600,
+                                    help="人工验证最长等待秒数")
     annas_batch_parser.add_argument("-H", "--headless", action='store_true', help="无头模式")
     annas_batch_parser.set_defaults(func=annas_batch)
 
@@ -539,6 +590,8 @@ def reg_subparser(subparsers):
     annas_fetch_parser.add_argument("-l", "--lang", default=[], nargs='+', help="语言")
     annas_fetch_parser.add_argument("-x", "--ext", default=[], nargs='+', help="扩展名")
     annas_fetch_parser.add_argument("-r", "--retry", type=int, default=10, help="重试")
+    annas_fetch_parser.add_argument("--ddos-timeout", type=int, default=600,
+                                    help="人工验证最长等待秒数")
     annas_fetch_parser.add_argument("-y", "--year", type=int, help="年份")
     annas_fetch_parser.add_argument("-H", "--headless", action='store_true', help="无头模式")
     annas_fetch_parser.set_defaults(func=annas_fetch)
@@ -559,6 +612,7 @@ def main():
     reg_subparser(subparsers)
     args = parser.parse_args()
     args.headless = getattr(args, 'headless', False)
+    args.ddos_timeout = getattr(args, 'ddos_timeout', 600) * 1000
     args.func(args)
 
 
