@@ -175,9 +175,9 @@ def wait_for_captcha_clear(page: CdpPage, el_chk: str, timeout_ms=600_000):
             (() => {{
                 const iframe = document.querySelector("{selectors['captcha_iframe']}");
                 if (!iframe) return false;
-                const iframeStyle = window.getComputedStyle(iframe);
-                // alert(iframeStyle.display)
-                return iframeStyle.display !== 'none'
+                // const iframeStyle = window.getComputedStyle(iframe);
+                // alert(iframe.style.display)
+                return iframe.style.display !== 'none'
             }})()
         ''')
         print(f'has_captcha: {has_captcha}')
