@@ -107,7 +107,7 @@ def import_gh_repos(ow, gh_org):
 
 
     cookie_fname = 'gitcode_cookies.json'
-    with camou_create_driver(headless=True) as (cam, ctx, page):
+    with camou_create_driver(headless=False) as (cam, ctx, page):
         if path.isfile(cookie_fname):
             print('导入Cookie')
             page.goto('https://gitcode.com')
@@ -162,9 +162,16 @@ def import_gh_repos(ow, gh_org):
                 }''',
                 [name_text, name],
             )
-            ow_sel = '.devui-editable-select-input__suffix'
-            page.locator(ow_sel).wait_for(state='attached', timeout=20000)
-            page.evaluate('(sel) => document.querySelector(sel).click()', ow_sel)
+            ow_text = '.devui-editable-select-input__inner'
+            page.locator(ow_text).wait_for(state='attached', timeout=20000)
+            page.evaluate('''
+                ([sel, text]) => {
+                    var el = document.querySelector(sel)
+                    el.click()
+                    el.value = text
+                    el.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }))
+                }
+            ''', [ow_text, ow])
             ow_dropdown = 'li.devui-editable-select__item:nth-child(2)'
             page.locator(ow_dropdown).wait_for(state='attached', timeout=20000)
             page.evaluate('(sel) => document.querySelector(sel).click()', ow_dropdown)
@@ -224,6 +231,7 @@ def del_org_priv_repos(ow):
 
 def main():
     # del_org_priv_repos('opendoccn1')
-    import_gh_repos('CyberCommy1', 'CyberCommy')
+    import_gh_repos('ixinzhi', 'ixinzhi')
+    import_gh_repos('it-ebooks-1', 'it-ebooks-0')
 
 if __name__ == '__main__': main()
