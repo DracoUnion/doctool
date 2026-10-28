@@ -17,31 +17,23 @@ Protocol（CDP）驱动真实的 Chrome：脚本自己拉起一个带调试端�
 """
 import argparse
 import copy
-import itertools
 import json
 import os
 import random
 import re
-import shutil
 import subprocess as subp
+import base64
 import sys
-import tempfile
-import threading
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
 from difflib import SequenceMatcher
 from urllib.parse import quote_plus
 
-import requests
 import tqdm
 from pyquery import PyQuery as pq
-
-try:
-    import websocket
-except ImportError:
-    raise SystemExit('缺少 websocket-client 库：pip install websocket-client')
+from BookerDownloadTool.util import to_kebab, request_retry, fname_escape
+from BookerDownloadTool.cdp import cdp_create_driver, CdpPage
 
 HOST = 'annas-archive.gl'
 
@@ -59,57 +51,6 @@ selectors = {
     'captcha_tb': 'input.ddg-modal__input',
 }
 
-# ───────────────────────────── 通用小工具 ─────────────────────────────
-
-def request_retry(method, url, retry=10, check_status=False, **kw):
-    kw.setdefault('timeout', 10)
-    for i in range(retry):
-        try:
-            r = requests.request(method, url, **kw)
-            if check_status:
-                r.raise_for_status()
-            return r
-        except KeyboardInterrupt as e:
-            raise e
-        except Exception as e:
-            print(f'{url} retry {i}')
-            if i == retry - 1:
-                raise e
-
-
-def fname_escape(name: str) -> str:
-    return name.replace('\\', '＼') \
-               .replace('/', '／') \
-               .replace(':', '：') \
-               .replace('*', '＊') \
-               .replace('?', '？') \
-               .replace('"', '＂') \
-               .replace('<', '＜') \
-               .replace('>', '＞') \
-               .replace('|', '｜')
-
-
-def to_kebab(name: str) -> str:
-    """将标题转为 kebab-case slug。"""
-    s = re.sub(r"[^\w\s\u4e00-\u9fff\-]", "", name)
-    s = re.sub(r"[\s_]+", "-", s).strip("-").lower()
-    return s[:60] or "unnamed"
-
-
-# ─────────────────────────── Chrome CDP 封装 ───────────────────────────
-
-class CdpError(RuntimeError):
-    pass
-
-
-class DdosGuardError(RuntimeError):
-    """DDoS-Guard 验证需要人工完成。"""
-
-
-class DdosGuardHeadlessError(DdosGuardError):
-    """无头浏览器无法进行人工验证。"""
-
-
 _DDOS_DETECT_JS = """(() => {
     const title = (document.title || '').toLowerCase();
     const path = ((location.host || '') + (location.pathname || '')).toLowerCase();
@@ -117,318 +58,51 @@ _DDOS_DETECT_JS = """(() => {
            !!document.querySelector('#ddg-captcha, #ddg-iframe, #request-info');
 })()"""
 
+def is_ddos_challenge(page: CdpPage, el_chk: str):
+    page.wait_for_selector(selectors['captcha_iframe'] + ', ' + el_chk)
+    return bool(page.evaluate(_DDOS_DETECT_JS))
 
-class CdpConnection:
-    """一个同步的 CDP WebSocket 连接（请求/响应按 id 配对）。"""
-
-    def __init__(self, ws, timeout_ms=60_000):
-        self.ws = ws
-        self.timeout_ms = timeout_ms
-        self._id_gen = itertools.count(1)
-        self._lock = threading.Lock()
-
-    @classmethod
-    def connect(cls, url, timeout_ms=30_000):
-        # timeout 同时作用于握手与 recv：recv 每 N 秒返回一次，便于外层按
-        # 自己的 deadline 判断超时，而不是被一条永远等不到的消息卡死。
-        ws = websocket.create_connection(url, timeout=15, origin=None)
-        return cls(ws, timeout_ms=timeout_ms)
-
-    def send(self, method, params=None, session_id=None, timeout_ms=None):
-        msg_id = next(self._id_gen)
-        payload = {'id': msg_id, 'method': method}
-        if params is not None:
-            payload['params'] = params
-        if session_id:
-            payload['sessionId'] = session_id
-        timeout_ms = timeout_ms or self.timeout_ms
-        with self._lock:
-            self.ws.send(json.dumps(payload))
-        deadline = time.time() + timeout_ms / 1000.0
-        while True:
-            if time.time() > deadline:
-                raise TimeoutError(f'CDP 超时：{method}')
-            try:
-                data = json.loads(self.ws.recv())
-            except KeyboardInterrupt:
-                raise
-            except websocket.WebSocketTimeoutException:
-                continue  # recv 定时返回，检查 deadline
-            except websocket.WebSocketConnectionClosedException as e:
-                raise CdpError(f'CDP 连接已关闭：{e}')
-            if data.get('id') == msg_id:
-                if data.get('error'):
-                    raise CdpError(
-                        f'{method}: {data["error"].get("message", data["error"])}')
-                return data.get('result', {})
-            # id 不匹配的是事件通知，这里不订阅事件，直接丢弃
-
-    def close(self):
-        try:
-            self.ws.close()
-        except Exception:
-            pass
-
-
-class CdpPage:
-    """绑定到单个 Chrome tab 的 CDP 会话，等价于原 annas.py 的 page 对象。"""
-
-    def __init__(self, cdp: CdpConnection, session_id, target_id, proc=None, profile=None):
-        self.cdp = cdp
-        self.session_id = session_id
-        self.target_id = target_id
-        self.proc = proc          # Chrome 主进程（用于清理）
-        self.profile = profile    # 临时 user-data-dir（用于清理）
-
-    def send(self, method, params=None, timeout_ms=None):
-        return self.cdp.send(method, params,
-                             session_id=self.session_id, timeout_ms=timeout_ms)
-
-    # ── 页面操作 ──
-
-    def evaluate(self, expression, timeout_ms=15_000):
-        try:
-            res = self.send('Runtime.evaluate', {
-                'expression': expression,
-                'returnByValue': True,
-            }, timeout_ms=timeout_ms)
-            if res.get('exceptionDetails'):
-                raise CdpError(f'Runtime.evaluate 异常：'
-                            f'{json.dumps(res["exceptionDetails"], ensure_ascii=False)[:500]}')
-            return res.get('result', {}).get('value')
-        except:
-            traceback.print_exc()
-            return None
-
-    def html(self) -> str:
-        """等价于 page.content()。"""
-        return self.evaluate('document.documentElement.outerHTML')
-
-    def goto(self, url, timeout_ms=60_000):
-        self.send('Page.navigate', {'url': url})
-        self.wait_ready(timeout_ms)
-
-    def reload(self, timeout_ms=60_000):
-        try:
-            self.send('Page.reload', {'ignoreCache': True})
-            self.wait_ready(timeout_ms)
-        except CdpError:
-            # 页面导航中/上下文销毁时 reload 会失败，交给后续 goto 兜底
-            pass
-
-    def wait_ready(self, timeout_ms=60_000):
-        """等价于 wait_for_load_state('domcontentloaded')。"""
-        deadline = time.time() + timeout_ms / 1000.0
-        while time.time() < deadline:
-            rs = self.evaluate('document.readyState')
-            if rs in ('interactive', 'complete'):
-                return True
-            time.sleep(0.2)
-        return False
-
-    def wait_for_iframe_selector(self, iframe_sel, el_sel, timeout_ms=50_000):
-        """轮询直到元素出现（如验证通过后页面关键选择器），等价于
-        page.wait_for_selector(selector, timeout=50000)。"""
-        expr = f'''
-            (() => {{
-            const iframe = document.querySelector('{iframe_sel}');
-            if (!iframe) return false;
+def wait_for_ddos_clear(page: CdpPage, label='', timeout_ms=600_000):
+    """等待用户在可见 Chrome 窗口中完成人工验证。"""
+    # self.send('Page.bringToFront', timeout_ms=10_000)
+    page.wait_for_iframe_selector(
+        selectors['captcha_iframe'], 
+        selectors['captcha_div'],
+    )
+    page.evaluate(f'''
+        (() => {{
+            const iframe = document.querySelector("{selectors['captcha_iframe']}");
             const innerDoc = iframe.contentDocument || iframe.contentWindow.document;
-            return !!innerDoc.querySelector('{el_sel}')
-            }})()
-        '''
-        deadline = time.time() + timeout_ms / 1000.0
-        while time.time() < deadline:
-            if self.evaluate(expr):
-                return True
-            time.sleep(0.5)
-        raise TimeoutError(f'等待选择器超时（{timeout_ms}ms）：{el_sel}')
-
-    def wait_for_selector(self, selector, timeout_ms=50_000):
-        """轮询直到元素出现（如验证通过后页面关键选择器），等价于
-        page.wait_for_selector(selector, timeout=50000)。"""
-        expr = f'!!document.querySelector({json.dumps(selector)})'
-        deadline = time.time() + timeout_ms / 1000.0
-        while time.time() < deadline:
-            if self.evaluate(expr):
-                return True
-            time.sleep(0.5)
-        raise TimeoutError(f'等待选择器超时（{timeout_ms}ms）：{selector}')
-
-    def is_ddos_challenge(self, el_chk: str):
-        self.wait_for_selector(selectors['captcha_iframe'] + ', ' + el_chk)
-        return bool(self.evaluate(_DDOS_DETECT_JS))
-
-    def wait_for_ddos_clear(self, label='', timeout_ms=600_000):
-        """等待用户在可见 Chrome 窗口中完成人工验证。"""
-        # self.send('Page.bringToFront', timeout_ms=10_000)
-        self.wait_for_iframe_selector(
-            selectors['captcha_iframe'], 
-            selectors['captcha_div'],
-        )
-        self.evaluate(f'''
-            (() => {{
-                const iframe = document.querySelector("{selectors['captcha_iframe']}");
-                const innerDoc = iframe.contentDocument || iframe.contentWindow.document;
-                innerDoc.querySelector("{selectors["captcha_cb"]}").click();
-            }})()
-        ''')
-        print(
-            f'[DDoS-Guard] 检测到人工验证（{label or self.target_id}）。'
-            '请在 Chrome 窗口中完成验证；完成后将自动继续。'
-        )
-        self.wait_for_iframe_selector(
-            selectors['captcha_iframe'], 
-            selectors['captcha_img'],
-        )
-        time.sleep(2)
-        img_url = self.evaluate(f'''
-            (() => {{
-                const iframe = document.querySelector("{selectors['captcha_iframe']}");
-                const innerDoc = iframe.contentDocument || iframe.contentWindow.document;
-                return innerDoc.querySelector("{selectors["captcha_img"]}").src;
-            }})()
-        ''')
-        assert img_url.startswith('data:')
-        print('img_url: ' + img_url)
-        img_data = img_url[len('data:image/png;base64,'):]
-        time.sleep(50000)
-        raise DdosGuardError(
-            f'DDoS-Guard 人工验证超时（{timeout_ms / 1000:.0f}s）：'
-            f'{label or self.target_id}'
-        )
+            innerDoc.querySelector("{selectors["captcha_cb"]}").click();
+        }})()
+    ''')
+    print(
+        f'[DDoS-Guard] 检测到人工验证（{label or page.target_id}）。'
+        '请在 Chrome 窗口中完成验证；完成后将自动继续。'
+    )
+    page.wait_for_iframe_selector(
+        selectors['captcha_iframe'], 
+        selectors['captcha_img'],
+    )
+    time.sleep(2)
+    img_url = page.evaluate(f'''
+        (() => {{
+            const iframe = document.querySelector("{selectors['captcha_iframe']}");
+            const innerDoc = iframe.contentDocument || iframe.contentWindow.document;
+            return innerDoc.querySelector("{selectors["captcha_img"]}").src;
+        }})()
+    ''')
+    assert img_url.startswith('data:')
+    print('img_url: ' + img_url)
+    img_data = img_url[len('data:image/png;base64,'):]
+    img_data = base64.b64decode(img_data)
+    time.sleep(50000)
+    raise SystemError(
+        f'DDoS-Guard 人工验证超时（{timeout_ms / 1000:.0f}s）：'
+        f'{label or page.target_id}'
+    )
 
 
-# ─────────────────────────── Chrome 启动 / 清理 ───────────────────────────
-
-def find_chrome_executable():
-    override = os.environ.get('DL_ANNAS_CHROME', '').strip()
-    if override and os.path.exists(override):
-        return override
-    candidates = [
-        r'C:\Program Files\Google\Chrome\Application\chrome.exe',
-        r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
-        os.path.expandvars(r'%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe'),
-        r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
-        r'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
-    ]
-    for p in candidates:
-        if os.path.exists(p):
-            return p
-    for cmd in ('chrome', 'chromium', 'msedge'):
-        p = shutil.which(cmd)
-        if p:
-            return p
-    raise FileNotFoundError('未找到 Chrome/Edge，请设置 DL_ANNAS_CHROME 环境变量')
-
-
-def _wait_for_port_file(profile, proc, timeout_ms):
-    """--remote-debugging-port=0 时 Chrome 会把实际端口写入
-    <user-data-dir>/DevToolsActivePort，读取第一行即为端口号。"""
-    pf = os.path.join(profile, 'DevToolsActivePort')
-    deadline = time.time() + timeout_ms / 1000.0
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            raise CdpError(f'Chrome 意外退出，code={proc.returncode}')
-        if os.path.exists(pf):
-            try:
-                with open(pf) as f:
-                    return int(f.read().splitlines()[0].strip())
-            except (ValueError, IndexError):
-                pass
-        time.sleep(0.15)
-    raise TimeoutError(f'Chrome 调试端口未就绪（{timeout_ms}ms）')
-
-
-def _wait_for_ws_url(port, timeout_ms):
-    url = f'http://127.0.0.1:{port}/json/version'
-    deadline = time.time() + timeout_ms / 1000.0
-    last_err = None
-    while time.time() < deadline:
-        try:
-            # 强制不走代理，localhost 无需代理
-            r = requests.get(url, timeout=2, proxies={'http': None, 'https': None})
-            data = r.json()
-            if data.get('webSocketDebuggerUrl'):
-                return data['webSocketDebuggerUrl']
-        except Exception as e:
-            last_err = e
-        time.sleep(0.15)
-    raise TimeoutError(f'Chrome CDP 端点未就绪：{last_err}')
-
-
-def _kill_chrome_tree(proc):
-    if proc is None or proc.poll() is not None:
-        return
-    try:
-        if os.name == 'nt':
-            subp.run(['taskkill', '/PID', str(proc.pid), '/T', '/F'],
-                     stdout=subp.DEVNULL, stderr=subp.DEVNULL)
-        else:
-            proc.kill()
-    except Exception:
-        try:
-            proc.kill()
-        except Exception:
-            pass
-
-
-def _launch_chrome(headless, timeout_ms=60_000):
-    chrome = find_chrome_executable()
-    profile = tempfile.mkdtemp(prefix='dl-annas-cdp-')
-    args = [
-        chrome,
-        '--remote-debugging-port=0',          # 自动分配空闲端口，多实例不冲突
-        f'--user-data-dir={profile}',          # 独立 profile，避免与已开的 Chrome 冲突
-        '--no-first-run',
-        '--no-default-browser-check',
-        '--disable-blink-features=AutomationControlled',
-        '--disable-dev-shm-usage',
-        '--window-size=1920,1080',
-    ]
-    if headless:
-        args += ['--headless=new', '--disable-gpu']
-    proc = subp.Popen(args, stdout=subp.DEVNULL, stderr=subp.DEVNULL)
-    try:
-        port = _wait_for_port_file(profile, proc, timeout_ms)
-        ws_url = _wait_for_ws_url(port, timeout_ms)
-        cdp = CdpConnection.connect(ws_url, timeout_ms=timeout_ms)
-        page = _attach_page(cdp, proc, profile)
-    except Exception:
-        _kill_chrome_tree(proc)
-        shutil.rmtree(profile, ignore_errors=True)
-        raise
-    return page
-
-
-def _attach_page(cdp, proc, profile):
-    target_id = cdp.send('Target.createTarget', {'url': 'about:blank'})['targetId']
-    res = cdp.send('Target.attachToTarget', {'targetId': target_id, 'flatten': True})
-    page = CdpPage(cdp, session_id=res['sessionId'], target_id=target_id,
-                   proc=proc, profile=profile)
-    page.send('Page.enable', timeout_ms=10_000)
-    page.send('Runtime.enable', timeout_ms=10_000)
-    page.send('DOM.enable', timeout_ms=10_000)
-    page.send('Page.bringToFront', timeout_ms=10_000)
-    return page
-
-
-@contextmanager
-def cdp_create_driver(headless=True, timeout_ms=60_000):
-    """等价于 plrt_create_driver()，yield 一个 CdpPage，退出时杀掉 Chrome。"""
-    page = _launch_chrome(headless, timeout_ms)
-    try:
-        yield page
-    finally:
-        page.cdp.close()
-        _kill_chrome_tree(page.proc)
-        # Chrome 释放 profile 文件是异步的，稍等片刻再清，清不掉也无妨
-        for _ in range(10):
-            try:
-                shutil.rmtree(page.profile)
-                break
-            except Exception:
-                time.sleep(0.3)
 
 
 # ─────────────────────────── 原 annas.py 的逻辑（仅替换 driver） ───────────────────────────
@@ -437,19 +111,14 @@ def cdp_get_html(page: CdpPage, url: str, el_chk: str = None,
                  ddos_timeout_ms=600_000, label='', headless=False) -> str:
     """导航页面，必要时等待用户完成 DDoS-Guard 人工验证。"""
     page.goto(url)
-    if page.is_ddos_challenge(el_chk):
-        page.wait_for_ddos_clear(label or url, ddos_timeout_ms)
+    if is_ddos_challenge(page, el_chk):
+        wait_for_ddos_clear(page, label or url, ddos_timeout_ms)
     if el_chk:
-        deadline = time.time() + 50_000 / 1000.0
-        while time.time() < deadline:
-            if page.evaluate(f'!!document.querySelector({json.dumps(el_chk)})'):
-                return page.html()
-            time.sleep(0.5)
-        raise TimeoutError(f'等待选择器超时（50000ms）：{el_chk}')
+        page.wait_for_selector(el_chk)
     return page.html()
 
 
-def cdp_get_html_retry(page, url: str, el_chk: str = None, retry: int = 10,
+def cdp_get_html_retry(page: CdpPage, url: str, el_chk: str = None, retry: int = 10,
                        ddos_timeout_ms=600_000, label='', headless=False) -> str:
     for i in range(retry):
         try:
