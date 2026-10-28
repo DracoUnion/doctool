@@ -168,6 +168,10 @@ def wait_for_ddos_clear(page: CdpPage, el_chk: str, timeout_ms=600_000):
             }})()
         ''')
         time.sleep(1)
+        has_captcha = page.evaluate(f'''
+            !!document.querySelector("{selectors['captcha_iframe']}");
+        ''')
+        if not has_captcha: break
 
 
 
