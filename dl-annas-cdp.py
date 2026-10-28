@@ -50,6 +50,14 @@ dft_hdr = {
     'Referer': f'https://{HOST}',
 }
 
+selectors = {
+    'captcha_iframe': 'iframe#ddg-iframe',
+    'captcha_div': 'div.ddg-captcha',
+    'captcha_cb': 'div.ddg-captcha__checkbox',
+    'captcha_img': 'img.ddg-modal__captcha-image',
+    'captcha_btn': 'button.ddg-modal__submit',
+    'captcha_tb': 'input.ddg-modal__input',
+}
 
 # ───────────────────────────── 通用小工具 ─────────────────────────────
 
@@ -142,6 +150,8 @@ class CdpConnection:
                 raise TimeoutError(f'CDP 超时：{method}')
             try:
                 data = json.loads(self.ws.recv())
+            except KeyboardInterrupt:
+                raise
             except websocket.WebSocketTimeoutException:
                 continue  # recv 定时返回，检查 deadline
             except websocket.WebSocketConnectionClosedException as e:
@@ -216,6 +226,24 @@ class CdpPage:
             time.sleep(0.2)
         return False
 
+    def wait_for_iframe_selector(self, iframe_sel, el_sel, timeout_ms=50_000):
+        """轮询直到元素出现（如验证通过后页面关键选择器），等价于
+        page.wait_for_selector(selector, timeout=50000)。"""
+        expr = f'''
+            (() => {{
+            const iframe = document.querySelector('{iframe_sel}');
+            if (!iframe) return false;
+            const innerDoc = iframe.contentDocument || iframe.contentWindow.document;
+            return !!innerDoc.querySelector('{el_sel}')
+            }})()
+        '''
+        deadline = time.time() + timeout_ms / 1000.0
+        while time.time() < deadline:
+            if self.evaluate(expr):
+                return True
+            time.sleep(0.5)
+        raise TimeoutError(f'等待选择器超时（{timeout_ms}ms）：{el_sel}')
+
     def wait_for_selector(self, selector, timeout_ms=50_000):
         """轮询直到元素出现（如验证通过后页面关键选择器），等价于
         page.wait_for_selector(selector, timeout=50000)。"""
@@ -227,21 +255,44 @@ class CdpPage:
             time.sleep(0.5)
         raise TimeoutError(f'等待选择器超时（{timeout_ms}ms）：{selector}')
 
-    def is_ddos_challenge(self):
+    def is_ddos_challenge(self, el_chk: str):
+        self.wait_for_selector(selectors['captcha_iframe'] + ', ' + el_chk)
         return bool(self.evaluate(_DDOS_DETECT_JS))
 
     def wait_for_ddos_clear(self, label='', timeout_ms=600_000):
         """等待用户在可见 Chrome 窗口中完成人工验证。"""
-        self.send('Page.bringToFront', timeout_ms=10_000)
-        deadline = time.time() + timeout_ms / 1000.0
+        # self.send('Page.bringToFront', timeout_ms=10_000)
+        self.wait_for_iframe_selector(
+            selectors['captcha_iframe'], 
+            selectors['captcha_div'],
+        )
+        self.evaluate(f'''
+            (() => {{
+                const iframe = document.querySelector("{selectors['captcha_iframe']}");
+                const innerDoc = iframe.contentDocument || iframe.contentWindow.document;
+                innerDoc.querySelector("{selectors["captcha_cb"]}").click();
+            }})()
+        ''')
         print(
             f'[DDoS-Guard] 检测到人工验证（{label or self.target_id}）。'
             '请在 Chrome 窗口中完成验证；完成后将自动继续。'
         )
-        while time.time() < deadline:
-            if not self.is_ddos_challenge():
-                return True
-            time.sleep(0.5)
+        self.wait_for_iframe_selector(
+            selectors['captcha_iframe'], 
+            selectors['captcha_img'],
+        )
+        time.sleep(2)
+        img_url = self.evaluate(f'''
+            (() => {{
+                const iframe = document.querySelector("{selectors['captcha_iframe']}");
+                const innerDoc = iframe.contentDocument || iframe.contentWindow.document;
+                return innerDoc.querySelector("{selectors["captcha_img"]}").src;
+            }})()
+        ''')
+        assert img_url.startswith('data:')
+        print('img_url: ' + img_url)
+        img_data = img_url[len('data:image/png;base64,'):]
+        time.sleep(50000)
         raise DdosGuardError(
             f'DDoS-Guard 人工验证超时（{timeout_ms / 1000:.0f}s）：'
             f'{label or self.target_id}'
@@ -386,7 +437,7 @@ def cdp_get_html(page: CdpPage, url: str, el_chk: str = None,
                  ddos_timeout_ms=600_000, label='', headless=False) -> str:
     """导航页面，必要时等待用户完成 DDoS-Guard 人工验证。"""
     page.goto(url)
-    if page.is_ddos_challenge():
+    if page.is_ddos_challenge(el_chk):
         page.wait_for_ddos_clear(label or url, ddos_timeout_ms)
     if el_chk:
         deadline = time.time() + 50_000 / 1000.0
@@ -403,8 +454,6 @@ def cdp_get_html_retry(page, url: str, el_chk: str = None, retry: int = 10,
     for i in range(retry):
         try:
             return cdp_get_html(page, url, el_chk, ddos_timeout_ms, label, headless)
-        except DdosGuardError:
-            raise
         except KeyboardInterrupt:
             raise
         except Exception:
