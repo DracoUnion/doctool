@@ -61,11 +61,11 @@ def normalise_cookies(cookies):
 
 
 def zhihu_post_retry(args, title, fname, col_idx):
-    with camou_create_driver(args.headless) as (browser, context, page):
+    with plrt_create_driver(args.headless) as (browser, context, page):
         page.set_default_timeout(config['timeout'] * 1000)
         page.set_default_navigation_timeout(config['timeout'] * 1000)
-        cookie = extract_cookies_multi_browsers('zhihu.com')
-        set_driver_cookie(context, cookie, 'zhihu.com', secure=True)
+        # cookie = extract_cookies_multi_browsers('zhihu.com')
+        # set_driver_cookie(context, cookie, 'zhihu.com', secure=True)
 
         for i in range(args.retry):
             try:
@@ -81,13 +81,11 @@ def zhihu_post_retry(args, title, fname, col_idx):
 
 def zhihu_post(context, page, un, pw, title, fname, col_idx, retry=20):
     # 登录
-    '''
     if path.isfile(config['cookie_fname']):
         print('导入Cookie')
         page.goto('https://zhihu.com')
         cookies = json.loads(open(config['cookie_fname'], encoding='utf8').read())
         context.add_cookies(normalise_cookies(cookies))
-    '''
     print('打开登录页面')
     page.goto('https://www.zhihu.com/signin')
     print('等待页面加载')
@@ -95,9 +93,6 @@ def zhihu_post(context, page, un, pw, title, fname, col_idx, retry=20):
     print('页面加载完成')
     print('page.url', page.url)
     if page.url.startswith('https://www.zhihu.com/signin'):
-        print('请打开浏览器登录')
-        return
-        '''
         print('添加账号密码')
         js_click(page, config['selectPwTab'])
         page.locator(config['unText']).first.fill(un)
@@ -114,7 +109,6 @@ def zhihu_post(context, page, un, pw, title, fname, col_idx, retry=20):
         open(config['cookie_fname'], 'w', encoding='utf8').write(
             json.dumps(normalise_cookies(cookies))
         )
-        '''
 
     print('打开编辑器')
     page.goto('https://zhuanlan.zhihu.com/write')
@@ -142,6 +136,8 @@ def zhihu_post(context, page, un, pw, title, fname, col_idx, retry=20):
     # el_gift.click()
 
     print('声明 AI 创作')
+    page.evaluate("window.scrollTo(0, 99999999)")
+    time.sleep(1)
     page.wait_for_selector(config['declCombo'])
     js_click(page, config['declCombo'])
     page.wait_for_selector(config['declItem'])
