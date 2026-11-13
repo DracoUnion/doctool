@@ -114,6 +114,8 @@ def import_repo_by_url(repo: dict, namespace_id: int) -> bool:
         "path": repo["name"],
         "namespace_id": namespace_id,
         "import_url": import_url,
+        # 默认公开可见
+        "visibility": "public",
         # 可选：启用镜像以保持同步（如果需要）
         "mirror": True,
     }
