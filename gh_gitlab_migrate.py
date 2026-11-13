@@ -16,11 +16,9 @@ from BookerDownloadTool.util import request_retry
 # ---------- 配置：从环境变量读取 ----------
 GH_TOKEN = os.environ.get("GH_TOKEN")
 GL_TOKEN = os.environ.get("GL_TOKEN")
-GITHUB_ORG = 'OpenDocCN'      # GitHub 组织 A 的 login 名
-GITLAB_GROUP = 'OpenDocCN1'  # GitLab 组织 B 的路径 (full_path)
 GITLAB_BASE_URL = os.environ.get("GL_BASE_URL", "https://gitlab.com").rstrip("/")
 
-if not all([GH_TOKEN, GL_TOKEN, GITHUB_ORG, GITLAB_GROUP]):
+if not all([GH_TOKEN, GL_TOKEN]):
     sys.exit("请设置环境变量: GH_TOKEN, GL_TOKEN, GH_ORG, GL_GROUP")
 
 # ---------- 通用请求头 ----------
@@ -130,21 +128,21 @@ def import_repo_by_url(repo: dict, namespace_id: int) -> bool:
         return False
 
 
-def main():
-    print(f"GitHub 组织: {GITHUB_ORG}")
-    print(f"GitLab 群组: {GITLAB_GROUP}  (base: {GITLAB_BASE_URL})")
+def gh_gitlab_migrate(github_org, gitlab_org):
+    print(f"GitHub 组织: {github_org}")
+    print(f"GitLab 群组: {gitlab_org}  (base: {GITLAB_BASE_URL})")
 
     # 1. 获取 GitLab 目标群组 ID
     print("正在获取 GitLab 群组 ID...")
     try:
-        namespace_id = get_gitlab_group_id(GITLAB_GROUP)
+        namespace_id = get_gitlab_group_id(gitlab_org)
         print(f"  群组 ID: {namespace_id}")
     except Exception as exc:
-        sys.exit(f"无法获取群组 '{GITLAB_GROUP}' 的 ID: {exc}")
+        sys.exit(f"无法获取群组 '{gitlab_org}' 的 ID: {exc}")
 
     # 2. 获取 GitHub 仓库列表
     print("正在获取 GitHub 仓库列表...")
-    repos = list_github_repos(GITHUB_ORG)
+    repos = list_github_repos(github_org)
     print(f"共发现 {len(repos)} 个仓库")
 
     # 3. 获取 GitLab 群组中已存在的项目，计算尚未导入的仓库
@@ -152,7 +150,7 @@ def main():
     try:
         existing_paths = list_gitlab_repo_paths(namespace_id)
     except Exception as exc:
-        sys.exit(f"无法获取 GitLab 群组 '{GITLAB_GROUP}' 的项目列表: {exc}")
+        sys.exit(f"无法获取 GitLab 群组 '{gitlab_org}' 的项目列表: {exc}")
     print(f"GitLab 群组中已有 {len(existing_paths)} 个项目\n")
 
     missing_repos = [r for r in repos if r["name"].lower() not in existing_paths]
@@ -184,6 +182,9 @@ def main():
 
     print(f"\n完成。成功: {success}, 失败: {failed}, 跳过(已存在): {skipped}")
 
+def main():
+    gh_gitlab_migrate('OpenDocCN', 'OpenDocCN1')
+    gh_gitlab_migrate('DracoUnion', 'DracoUnion1')
 
 if __name__ == "__main__":
     main()
