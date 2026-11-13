@@ -3,7 +3,6 @@ import requests
 import time
 
 # 配置
-ORG_NAME = "OpenDocCN1"  # 替换为目标组织名
 GITHUB_TOKEN = os.getenv("GH_TOKEN")  # 建议从环境变量读取
 
 if not GITHUB_TOKEN:
@@ -50,10 +49,9 @@ def sync_fork(owner, repo, branch):
     else:
         return False, f"HTTP {resp.status_code}: {resp.text[:200]}"
 
-
-def main():
-    print(f"获取组织 {ORG_NAME} 的仓库列表...")
-    repos = get_all_org_repos(ORG_NAME)
+def sync_fork_org(org_name):
+    print(f"获取组织 {org_name} 的仓库列表...")
+    repos = get_all_org_repos(org_name)
     forks = [r for r in repos if r.get("fork")]
 
     print(f"共 {len(repos)} 个仓库，其中 {len(forks)} 个是 Fork\n")
@@ -67,7 +65,7 @@ def main():
         print(f"同步 {name} (分支: {default_branch}) ... ", end="")
 
         try:
-            ok, msg = sync_fork(ORG_NAME, name, default_branch)
+            ok, msg = sync_fork(org_name, name, default_branch)
             if ok:
                 print(f"✅ 成功 ({msg})")
             else:
@@ -77,6 +75,8 @@ def main():
 
         time.sleep(0.2)  # 避免触发速率限制
 
+def main():
+    sync_fork_org('OpenDocCN1')
 
 if __name__ == "__main__":
     main()
