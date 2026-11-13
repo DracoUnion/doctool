@@ -12,7 +12,7 @@
 
 流程：
   1. 通过飞鸟邮箱 worker 创建一次性邮箱（同 agnes_reg.py）
-  2. Selenium + Firefox 打开注册页，填邮箱、选邮箱验证、点“发送验证码”
+  2. Camoufox（Firefox 内核，更真实指纹）打开注册页，填邮箱、选邮箱验证、点“发送验证码”
   3. OpenCV 定位滑块缺口，模拟人类拖拽完成人机验证 -> 后台向邮箱下发 6 位验证码
      若自动拖拽被风控拦截，可手动输入已获取的 CaptchaTicket 继续
   4. 收邮件提取验证码
@@ -41,12 +41,116 @@ import cv2
 import numpy as np
 import requests
 
-from selenium import webdriver
-from selenium.webdriver.common.action_chains import ActionChains
-from selenium.webdriver.common.by import By
-from selenium.webdriver.firefox.options import Options
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
+from camoufox.sync_api import Camoufox
+from camoufox import launch_options as _camoufox_launch_options
+from playwright.sync_api import sync_playwright
+
+# ---------------------------------------------------------------------------
+# 浏览器 profile：复用已信任 developer.amd.com.cn 证书的 cert8.db
+# 该站点 DigiCert/GeoTrust 证书链在全新 Firefox profile 中 TLS 握手失败，
+# 需把含证书例外的 cert8.db 注入 Camoufox 启动用的 profile 才能稳定访问。
+# ---------------------------------------------------------------------------
+FIREFOX_PROFILE_DIR = os.environ.get(
+    "AMD_FIREFOX_PROFILE",
+    os.path.join(os.path.expanduser("~"), "amd_ff_profile"),
+)
+
+
+def _ensure_trusted_profile() -> str:
+    """确保 profile 目录里有已信任 AMD 证书的 cert8.db。
+
+    优先从系统 Firefox 默认 profile 拷贝（那里存了证书例外）；
+    若找不到，回退到环境变量 AMD_FIREFOX_PROFILE 指向的目录。
+    """
+    os.makedirs(FIREFOX_PROFILE_DIR, exist_ok=True)
+    target = os.path.join(FIREFOX_PROFILE_DIR, "cert8.db")
+    if os.path.exists(target):
+        return FIREFOX_PROFILE_DIR
+    # 尝试从系统 Firefox 拷贝
+    candidates = [
+        os.path.join(os.environ.get("APPDATA", ""), "Mozilla", "Firefox",
+                     "Profiles"),
+    ]
+    for base in candidates:
+        if not os.path.isdir(base):
+            continue
+        for entry in os.listdir(base):
+            src = os.path.join(base, entry, "cert8.db")
+            if os.path.exists(src):
+                import shutil
+                shutil.copy(src, target)
+                print(f"[profile] 从 {src} 拷贝 cert8.db -> {FIREFOX_PROFILE_DIR}")
+                return FIREFOX_PROFILE_DIR
+    print(f"[profile] 未找到系统 cert8.db，使用空 profile {FIREFOX_PROFILE_DIR}（证书可能仍不信任）")
+    return FIREFOX_PROFILE_DIR
+
+
+def _launch_trusted_camoufox():
+    """启动 Camoufox 持久化上下文，复用已信任证书的 profile。
+
+    返回 (playwright, BrowserContext, page)；调用方负责 close context 与
+    playwright.stop()。握手可能仍间歇失败，故内置重试。
+    """
+    prof = _ensure_trusted_profile()
+    opts = _camoufox_launch_options(headless=False, locale="zh-CN")
+    opts.pop("executable_path", None)
+    opts.pop("user_data_dir", None)
+    opts["no_viewport"] = True
+
+    last_err = None
+    for attempt in range(3):
+        pw = sync_playwright().start()
+        ctx = None
+        try:
+            ctx = pw.firefox.launch_persistent_context(prof, **opts)
+            page = ctx.new_page()
+            # 在导航前注入 ticket 拦截器（init script 先于页面 SDK 运行）
+            page.add_init_script("""
+            window.__amd_captcha_ticket = null;
+            const _installInterceptor = () => {
+                if (typeof window.initAliyunCaptcha === 'function' && !window.__amd_hooked) {
+                    window.__amd_hooked = true;
+                    const orig = window.initAliyunCaptcha;
+                    window.initAliyunCaptcha = function(cfg) {
+                        if (cfg && cfg.success) {
+                            const s = cfg.success;
+                            cfg.success = function(res) {
+                                window.__amd_captcha_ticket =
+                                    res && res.captchaTicket ? res.captchaTicket : null;
+                                if (s) s(res);
+                            };
+                        }
+                        return orig(cfg);
+                    };
+                }
+            };
+            const _poll = () => { _installInterceptor();
+                if (!window.__amd_hooked) setTimeout(_poll, 200); };
+            _poll();
+            """)
+            page.goto(
+                "https://developer.amd.com.cn/register?"
+                "returnUrl=https://developer.amd.com.cn/radeon/tokenfactory",
+                wait_until="domcontentloaded",
+                timeout=60000,
+            )
+            print(f"[captcha] 页面加载成功（第 {attempt + 1} 次）")
+            return pw, ctx, page
+        except Exception as e:
+            last_err = str(e).splitlines()[0][:120]
+            print(f"[captcha] 第 {attempt + 1} 次失败: {last_err}")
+            try:
+                if ctx:
+                    ctx.close()
+            except Exception:
+                pass
+            try:
+                pw.stop()
+            except Exception:
+                pass
+            time.sleep(2)
+    raise RuntimeError(f"无法访问注册页: {last_err}")
+
 
 # ---------------------------------------------------------------------------
 # 飞鸟邮箱配置（与 agnes_reg.py 保持一致，替换为你自己的后台域名/密码）
@@ -164,37 +268,50 @@ def check_verification_code(jwt: str) -> tuple[bool, Optional[str]]:
 
 
 # ---------------------------------------------------------------------------
-# 阿里云滑块人机验证（Selenium + OpenCV，获取 CaptchaTicket 并触发发码）
+# 阿里云滑块人机验证（Camoufox + OpenCV，获取 CaptchaTicket 并触发发码）
 # ---------------------------------------------------------------------------
-def _match_slide_distance(bg: np.ndarray, slide: np.ndarray) -> int:
-    """OpenCV 模板匹配，返回缺口中心在原始图中的 x 坐标。"""
-    bg_g = cv2.cvtColor(bg, cv2.COLOR_BGR2GRAY)
-    slide_g = cv2.cvtColor(slide, cv2.COLOR_BGR2GRAY)
+def _find_gap_x(bg: np.ndarray) -> int:
+    """检测背景图中拼图缺口的中心 x 坐标（原始图像素）。
 
-    # 去掉 slide 四周空白，只保留实图部分
-    _, mask = cv2.threshold(slide_g, 10, 255, cv2.THRESH_BINARY)
-    ys, xs = np.where(mask > 0)
-    if len(xs) > 0:
-        x0, x1 = xs.min(), xs.max()
-        y0, y1 = ys.min(), ys.max()
-        slide_crop = slide[y0:y1 + 1, x0:x1 + 1]
-    else:
-        slide_crop = slide
-    slide_crop_g = cv2.cvtColor(slide_crop, cv2.COLOR_BGR2GRAY)
-
-    res = cv2.matchTemplate(bg_g, slide_crop_g, cv2.TM_CCORR_NORMED)
-    _, max_val, _, max_loc = cv2.minMaxLoc(res)
-    gap_center_x = max_loc[0] + slide_crop.shape[1] / 2
-    print(f"[captcha] match val={max_val:.4f} loc={max_loc}")
-    return int(gap_center_x)
+    缺口是比周围更亮的拼图形状洞。用 HSV（高亮 + 低饱和）找亮区连通块，
+    取中右区域（rel_x ∈ [0.45, 0.85]，0.85 封顶排除右上角天空亮块）里
+    面积最大的块作为缺口。模板匹配对带暗边的滑块片不可靠（匹配到深色
+    树/地面而非缺口），故改用缺口本身的亮色特征定位。
+    """
+    h, w = bg.shape[:2]
+    hsv = cv2.cvtColor(bg, cv2.COLOR_BGR2HSV)
+    v, s = hsv[:, :, 2], hsv[:, :, 1]
+    mask = ((v > 180) & (s < 70)).astype(np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    num, _labels, stats, cents = cv2.connectedComponentsWithStats(mask, 8)
+    best = None
+    for i in range(1, num):
+        _x, _y, ww, hh, area = stats[i]
+        if area < 300 or area > 3500:
+            continue
+        if ww < 15 or hh < 15:
+            continue
+        cx = cents[i][0]
+        if cx < 0.45 * w or cx > 0.85 * w:
+            continue
+        if best is None or area > best[0]:
+            best = (area, cx)
+    if best:
+        return int(best[1])
+    return int(w * 0.65)
 
 
 def solve_captcha_and_send_code(email: str,
                                 manual_ticket: Optional[str] = None) -> Optional[str]:
-    """用 Selenium 完成滑块验证，触发后台发码，返回 CaptchaTicket。
+    """用 Camoufox（Firefox 内核，更真实指纹）完成滑块验证，触发后台发码，返回 CaptchaTicket。
 
     流程：打开注册页 -> 填邮箱 -> 选邮箱验证 -> 点发送验证码 -> 出现滑块 ->
     OpenCV 定位缺口 -> 拖拽滑块 -> 验证成功 -> 后台自动调 SendVerificationCode 发码。
+
+    该站点证书链由 DigiCert/GeoTrust 签发，全新 Firefox profile 在 TLS 握手阶段
+    报 SSL_ERROR_UNKNOWN。解决：把已含该站点证书例外的 cert8.db 注入 Camoufox
+    启动用的持久化 profile（默认 ~/.amd_ff_profile，可从系统 Firefox profile 自动
+    拷贝），用 launch_persistent_context 复用该 profile 即可稳定访问。
 
     若自动拖拽被风控拦截（ticket 为 None），则在控制台提示并等待用户手动完成滑块验证；
     手动完成后脚本会自动读取 ticket 并继续。也可直接传入 manual_ticket 跳过浏览器验证。
@@ -204,52 +321,50 @@ def solve_captcha_and_send_code(email: str,
         print(f"[captcha] 使用手动提供的 ticket: {manual_ticket[:20]}...")
         return manual_ticket
 
-    opts = Options()
-    opts.headless = False
-    opts.set_capability("pageLoadStrategy", "eager")
-    opts.set_preference("dom.webdriver.enabled", False)
-    opts.set_preference("useAutomationExtension", False)
-    driver = webdriver.Firefox(options=opts)
-    driver.set_window_size(1400, 900)
-
-    wait = WebDriverWait(driver, 20)
+    # 启动 Camoufox（持久化上下文 + 已信任证书的 profile），访问注册页
+    try:
+        pw, ctx, page = _launch_trusted_camoufox()
+    except Exception as e:
+        print(f"[captcha] {e}")
+        return None
 
     try:
-        driver.get(
-            "https://developer.amd.com.cn/register?"
-            "returnUrl=https://developer.amd.com.cn/radeon/tokenfactory"
-        )
-
-        # 反自动化标记
-        driver.execute_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
-        )
+        # 在 SDK 初始化前注入 ticket 拦截器（init script 在导航前运行）
+        # _launch_trusted_camoufox 里已通过 add_init_script 注入；
+        # 这里兜底再补一次（幂等，已挂钩则跳过）
+        page.evaluate("""
+        window.__amd_captcha_ticket = window.__amd_captcha_ticket || null;
+        """)
 
         # 填邮箱
-        email_input = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'input[type="email"]')))
-        email_input.clear()
-        email_input.send_keys(email)
+        email_input = page.locator('input[type="email"]').first
+        email_input.wait_for(state="visible", timeout=15000)
+        email_input.fill("")
+        email_input.type(email, delay=20)
 
         # 选邮箱验证
-        radios = driver.find_elements(By.CSS_SELECTOR, 'input[type="radio"][value="email"]')
-        if radios:
-            driver.execute_script("arguments[0].click();", radios[0])
+        radios = page.locator('input[type="radio"][value="email"]')
+        if radios.count() > 0:
+            radios.first.click()
 
         # 点发送验证码
-        btns = driver.find_elements(By.XPATH, '//button')
+        btns = page.locator('button').all()
         clicked = False
         for b in btns:
-            txt = b.text.strip()
+            try:
+                txt = b.inner_text().strip()
+            except Exception:
+                continue
             if '验证码' in txt or 'Send Code' in txt:
-                driver.execute_script("arguments[0].click();", b)
+                b.click()
                 clicked = True
                 break
         if not clicked:
             print("[captcha] 未找到发送验证码按钮")
             return None
 
-        # 安装 ticket 拦截器（等待 SDK 可用后再挂钩）
-        driver.execute_script("""
+        # 安装 ticket 拦截器（在 SDK 可用后挂钩 initAliyunCaptcha）
+        page.add_script_tag(content="""
         window.__amd_captcha_ticket = null;
         window.__amd_sdk_ready = false;
         const waitForSDK = () => {
@@ -277,50 +392,58 @@ def solve_captcha_and_send_code(email: str,
         waitForSDK();
         """)
 
-        time.sleep(5)
+        page.wait_for_timeout(5000)
 
-        sdk_ready = driver.execute_script('return window.__amd_sdk_ready;')
+        sdk_ready = page.evaluate("window.__amd_sdk_ready")
         print(f"[captcha] SDK ready: {sdk_ready}")
 
         # 等待滑块图片出现
         deadline = time.time() + 15
         imgs_el = []
         while time.time() < deadline:
-            imgs_el = driver.find_elements(By.CSS_SELECTOR, 'img[src^="data:image"]')
+            imgs_el = page.locator('img[src^="data:image"]').all()
             if len(imgs_el) >= 2:
                 break
-            time.sleep(0.5)
+            page.wait_for_timeout(500)
 
         if len(imgs_el) < 2:
             print("[captcha] 滑块验证码图未出现")
-            driver.save_screenshot('amd_captcha_noimg.png')
+            page.screenshot(path='amd_captcha_noimg.png')
             return None
 
-        bg_b64 = imgs_el[0].get_attribute('src').split(',', 1)[1]
-        slide_b64 = imgs_el[1].get_attribute('src').split(',', 1)[1]
+        bg_src = imgs_el[0].get_attribute("src")
+        slide_src = imgs_el[1].get_attribute("src")
+        bg_b64 = bg_src.split(',', 1)[1]
+        slide_b64 = slide_src.split(',', 1)[1]
         bg = cv2.imdecode(np.frombuffer(base64.b64decode(bg_b64), np.uint8), cv2.IMREAD_COLOR)
         slide = cv2.imdecode(np.frombuffer(base64.b64decode(slide_b64), np.uint8), cv2.IMREAD_COLOR)
         print(f"[captcha] bg={bg.shape} slide={slide.shape}")
 
-        bg_rect = imgs_el[0].rect
-        scale_x = bg_rect['width'] / bg.shape[1]
+        # 背景图在页面上的显示位置（用于把原始图坐标映射到页面坐标）
+        box = imgs_el[0].bounding_box()
+        if box is None:
+            print("[captcha] 无法获取背景图位置")
+            return None
+        scale_x = box["width"] / bg.shape[1]
 
-        gap_center_orig_x = _match_slide_distance(bg, slide)
-        gap_center_page_x = bg_rect['x'] + gap_center_orig_x * scale_x
+        gap_center_orig_x = _find_gap_x(bg)
+        print(f"[captcha] gap_x(orig)={gap_center_orig_x} bg_w={bg.shape[1]}")
+        gap_center_page_x = box["x"] + gap_center_orig_x * scale_x
 
-        slider = driver.find_element(By.CSS_SELECTOR, '.slider-move')
-        srect = slider.rect
-        slider_center_x = srect['x'] + srect['width'] / 2
+        slider = page.locator('.slider-move').first
+        sb = slider.bounding_box()
+        if sb is None:
+            print("[captcha] 无法获取滑块位置")
+            return None
+        slider_center_x = sb["x"] + sb["width"] / 2
         distance = gap_center_page_x - slider_center_x
         print(f"[captcha] drag_distance={distance:.1f}")
 
         # 尝试自动拖拽
         if abs(distance) > 5:
-            actions = ActionChains(driver)
-            actions.move_to_element_with_offset(slider, srect['width'] // 2, srect['height'] // 2)
-            actions.pause(0.2)
-            actions.click_and_hold()
-            actions.pause(0.1)
+            # 移动到滑块中心并按下
+            page.mouse.move(sb["x"] + sb["width"] / 2, sb["y"] + sb["height"] / 2)
+            page.mouse.down()
 
             adist = int(abs(distance))
             step_dir = 1 if distance > 0 else -1
@@ -329,25 +452,35 @@ def solve_captcha_and_send_code(email: str,
             while current < seg1:
                 step = random.uniform(4, 8)
                 current = min(current + step, seg1)
-                actions.move_by_offset(int(step) * step_dir, random.randint(-3, 3))
-                actions.pause(random.uniform(0.01, 0.05))
-            actions.move_by_offset(-3 * step_dir, 0)
-            actions.pause(0.1)
+                page.mouse.move(
+                    sb["x"] + sb["width"] / 2 + current * step_dir,
+                    sb["y"] + sb["height"] / 2 + random.randint(-3, 3),
+                )
+                page.wait_for_timeout(random.uniform(10, 50))
+            # 小回退
+            page.mouse.move(
+                sb["x"] + sb["width"] / 2 + seg1 * step_dir - 3 * step_dir,
+                sb["y"] + sb["height"] / 2,
+            )
+            page.wait_for_timeout(100)
+            # 最后精确段
             while current < adist:
                 step = random.uniform(0.3, 1.0)
                 current = min(current + step, adist)
-                actions.move_by_offset(int(step) * step_dir, 0)
-                actions.pause(random.uniform(0.05, 0.1))
-            actions.pause(0.2)
-            actions.release()
-            actions.perform()
+                page.mouse.move(
+                    sb["x"] + sb["width"] / 2 + current * step_dir,
+                    sb["y"] + sb["height"] / 2,
+                )
+                page.wait_for_timeout(random.uniform(50, 100))
+            page.wait_for_timeout(200)
+            page.mouse.up()
             print("[captcha] drag performed")
-            time.sleep(5)
+            page.wait_for_timeout(5000)
 
-        ticket = driver.execute_script('return window.__amd_captcha_ticket;')
+        ticket = page.evaluate("window.__amd_captcha_ticket")
         if ticket:
             print(f"[captcha] ticket obtained: {ticket[:20]}...")
-            driver.save_screenshot('amd_captcha_done.png')
+            page.screenshot(path='amd_captcha_done.png')
             return ticket
 
         # 自动拖拽失败 -> 等待用户手动完成滑块验证
@@ -355,19 +488,26 @@ def solve_captcha_and_send_code(email: str,
         print("[captcha] 脚本将每 2 秒检查一次 ticket，手动拖滑块成功后会自动继续")
         deadline = time.time() + 120  # 最多等待 2 分钟
         while time.time() < deadline:
-            ticket = driver.execute_script('return window.__amd_captcha_ticket;')
+            ticket = page.evaluate("window.__amd_captcha_ticket")
             if ticket:
                 print(f"[captcha] manual ticket obtained: {ticket[:20]}...")
-                driver.save_screenshot('amd_captcha_manual_done.png')
+                page.screenshot(path='amd_captcha_manual_done.png')
                 return ticket
-            time.sleep(2)
+            page.wait_for_timeout(2000)
 
         print("[captcha] 等待超时，未获得 ticket")
-        driver.save_screenshot('amd_captcha_timeout.png')
+        page.screenshot(path='amd_captcha_timeout.png')
         return None
 
     finally:
-        driver.quit()
+        try:
+            ctx.close()
+        except Exception:
+            pass
+        try:
+            pw.stop()
+        except Exception:
+            pass
 
 
 def send_verification_code(email: str, ticket: str) -> tuple[bool, str]:
