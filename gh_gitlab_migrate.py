@@ -65,6 +65,30 @@ def get_gitlab_group_id(group_path: str) -> int:
     return resp.json()["id"]
 
 
+def list_gitlab_repo_paths(group_id: int) -> set:
+    """
+    分页获取指定 GitLab 群组下已存在的项目，返回小写化的 path 集合，
+    用于与 GitHub 仓库名做大小写不敏感的比对。
+    """
+    paths = set()
+    page = 1
+    per_page = 100
+    while True:
+        url = f"{GITLAB_BASE_URL}/api/v4/groups/{group_id}/projects"
+        params = {"per_page": per_page, "page": page, "include_subgroups": False}
+        resp = request_retry('GET', url, headers=GL_HEADERS, params=params, timeout=30)
+        resp.raise_for_status()
+        batch = resp.json()
+        if not batch:
+            break
+        paths.update(p["path"].lower() for p in batch)
+        print(f"  已获取 GitLab 仓库: 第 {page} 页, 本页 {len(batch)} 个, 累计 {len(paths)} 个")
+        if len(batch) < per_page:
+            break
+        page += 1
+    return paths
+
+
 def build_auth_import_url(clone_url: str, gh_token: str) -> str:
     """
     为 GitHub 克隆 URL 嵌入认证信息，以便 GitLab 拉取私有仓库。
@@ -121,12 +145,30 @@ def main():
     # 2. 获取 GitHub 仓库列表
     print("正在获取 GitHub 仓库列表...")
     repos = list_github_repos(GITHUB_ORG)
-    print(f"共发现 {len(repos)} 个仓库\n")
+    print(f"共发现 {len(repos)} 个仓库")
+
+    # 3. 获取 GitLab 群组中已存在的项目，计算尚未导入的仓库
+    print("正在获取 GitLab 已存在的项目...")
+    try:
+        existing_paths = list_gitlab_repo_paths(namespace_id)
+    except Exception as exc:
+        sys.exit(f"无法获取 GitLab 群组 '{GITLAB_GROUP}' 的项目列表: {exc}")
+    print(f"GitLab 群组中已有 {len(existing_paths)} 个项目\n")
+
+    missing_repos = [r for r in repos if r["name"].lower() not in existing_paths]
+    skipped = len(repos) - len(missing_repos)
+    if skipped:
+        print(f"已导入，跳过: {skipped} 个")
+    print(f"待迁移: {len(missing_repos)} 个仓库\n")
+
+    if not missing_repos:
+        print("没有需要迁移的仓库，全部已存在。")
+        return
 
     success = 0
     failed = 0
-    for i, repo in enumerate(repos, 1):
-        print(f"[{i}/{len(repos)}] {repo['full_name']}")
+    for i, repo in enumerate(missing_repos, 1):
+        print(f"[{i}/{len(missing_repos)}] {repo['full_name']}")
         try:
             if import_repo_by_url(repo, namespace_id):
                 success += 1
@@ -137,10 +179,10 @@ def main():
             failed += 1
 
         # GitLab 对项目创建/导入有速率限制，保守间隔
-        if i < len(repos):
+        if i < len(missing_repos):
             time.sleep(5)  # URL 导入通常比 GitHub 导入限速宽松，5秒是较安全的间隔
 
-    print(f"\n完成。成功: {success}, 失败: {failed}")
+    print(f"\n完成。成功: {success}, 失败: {failed}, 跳过(已存在): {skipped}")
 
 
 if __name__ == "__main__":
