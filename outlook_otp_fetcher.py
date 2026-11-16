@@ -207,7 +207,7 @@ class OutlookVerificationCodeFetcher:
 if __name__ == "__main__":
     # 请替换为你自己的凭证
     # 格式对应: 邮箱----密码(占位)----client_id----refresh_token
-    line = '...'
+    line = open('outlook_emails.txt', encoding='utf8').read().split('\n')[0]
     EMAIL, _, CLIENT_ID, REFRESH_TOKEN, *_ = line.split('----')
 
     fetcher = OutlookVerificationCodeFetcher(
