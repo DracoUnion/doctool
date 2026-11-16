@@ -67,6 +67,26 @@ class OutlookVerificationCodeFetcher:
         except Exception:
             return None
 
+    def _raw_bytes_to_content(self, raw_bytes):
+        msg = message_from_bytes(raw_bytes)
+        # 提取邮件正文
+        content = ""
+        if msg.is_multipart():
+            for part in msg.walk():
+                content_type = part.get_content_type()
+                if content_type in ("text/plain", "text/html"):
+                    try:
+                        payload = part.get_payload(decode=True)
+                        if payload:
+                            content += payload.decode("utf-8", errors="ignore")
+                    except Exception:
+                        continue
+        else:
+            payload = msg.get_payload(decode=True)
+            if payload:
+                content = payload.decode("utf-8", errors="ignore")
+        return content
+
     def _extract_code_from_email(self, raw_email_bytes):
         """
         从原始邮件字节中提取验证码。
@@ -74,31 +94,17 @@ class OutlookVerificationCodeFetcher:
         这里使用正则 [0-9]{6} 或 [A-Z0-9]{6} 进行匹配，可根据实际邮件内容调整。
         """
         try:
-            msg = message_from_bytes(raw_email_bytes)
-            # 提取邮件正文
-            content = ""
-            if msg.is_multipart():
-                for part in msg.walk():
-                    content_type = part.get_content_type()
-                    if content_type in ("text/plain", "text/html"):
-                        try:
-                            payload = part.get_payload(decode=True)
-                            if payload:
-                                content += payload.decode("utf-8", errors="ignore")
-                        except Exception:
-                            continue
-            else:
-                payload = msg.get_payload(decode=True)
-                if payload:
-                    content = payload.decode("utf-8", errors="ignore")
+            content = self._raw_bytes_to_content(raw_email_bytes)
+            # print(content)
 
             # 优先匹配6位纯数字，其次匹配6位大写字母+数字
-            match = re.search(r"\b(\d{6})\b", content)
-            if match:
-                return match.group(1)
-            match = re.search(r"\b([A-Z0-9]{6})\b", content)
-            if match:
-                return match.group(1)
+            # 取最后一个
+            vcodes = re.findall(r"\b(\d{6})\b", content)
+            if vcodes:
+                return vcodes[-1]
+            vcodes = re.findall(r"\b([A-Z0-9]{6})\b", content)
+            if vcodes:
+                return vcodes[-1]
             return None
         except Exception as e:
             print(f"[警告] 解析邮件内容时出错: {e}")
@@ -185,6 +191,7 @@ class OutlookVerificationCodeFetcher:
                         print(f'{mailbox} {msg_id} 邮件太旧，跳过')
                         continue
 
+                    # print(f'{raw_bytes.decode("utf8")}')
                     code = self._extract_code_from_email(raw_bytes)
                     if code:
                         print(f"[成功] 在 {mailbox} 中找到验证码: {code}")
