@@ -29,6 +29,7 @@
 from __future__ import annotations
 
 import base64
+import traceback
 import imaplib
 import os
 import random
@@ -130,42 +131,6 @@ SCENE_URL = BASE + "/api/Aliyun/GetEncryptedSceneId"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:159.0) Gecko/20100101 Firefox/159.0"
 
 
-def http_get_json(url: str, params: dict | None = None,
-                  headers: dict | None = None) -> dict:
-    hdrs = {"User-Agent": UA, "Referer": "https://developer.amd.com.cn/register",
-            "Origin": "https://developer.amd.com.cn"}
-    if headers:
-        hdrs.update(headers)
-    r = requests.get(url, params=params, headers=hdrs, timeout=30, verify=False)
-    if r.status_code >= 300:
-        raise RuntimeError(f"HTTP {r.status_code}: {r.text[:300]}")
-    return r.json()
-
-
-def http_post_json(url: str, data: dict,
-                   headers: dict | None = None) -> dict:
-    hdrs = {"User-Agent": UA, "Content-Type": "application/json",
-            "Referer": "https://developer.amd.com.cn/register",
-            "Origin": "https://developer.amd.com.cn"}
-    if headers:
-        hdrs.update(headers)
-    r = requests.post(url, json=data, headers=hdrs, timeout=30, verify=False)
-    if r.status_code >= 300:
-        raise RuntimeError(f"HTTP {r.status_code}: {r.text[:300]}")
-    return r.json()
-
-
-def get_scene_id() -> dict[str, str]:
-    """获取阿里云验证码场景 ID。"""
-    j = http_get_json(SCENE_URL)
-    data = j.get("Data", {})
-    return {
-        "scene_id": data.get("SceneId", ""),
-        "encrypted_scene_id": data.get("EncryptedSceneId", ""),
-        "timestamp": str(data.get("Timestamp", "")),
-    }
-
-
 # ---------------------------------------------------------------------------
 # 账号/随机数据生成
 # ---------------------------------------------------------------------------
@@ -175,12 +140,6 @@ def generate_random_name() -> str:
     letters2 = ''.join(random.choices(string.ascii_lowercase, k=random.randint(1, 3)))
     return letters1 + numbers + letters2
 
-
-# ---------------------------------------------------------------------------
-# Outlook 账号读取（outlook_emails.txt：EMAIL----placeholder----CLIENT_ID----REFRESH_TOKEN）
-# ---------------------------------------------------------------------------
-_OUTLOOK_ACCOUNTS: list[tuple[str, str, str]] = []
-_OUTLOOK_IDX = 0
 
 
 def _load_outlook_accounts(path: str = "outlook_emails.txt") -> list[tuple[str, str, str]]:
@@ -632,42 +591,24 @@ def solve_captcha_and_send_code(page) -> bool:
 
     return captcha_vanished
 
-# ---------------------------------------------------------------------------
-# 注册
-# ---------------------------------------------------------------------------
-def reg_amd(email: str, vcode: str) -> tuple[Optional[str], str]:
-    """调用 Register 接口注册 AMD 账户，返回 (access_token, errmsg)。"""
-    last = generate_random_name().capitalize()
-    first = generate_random_name().capitalize()
-    phone = "138" + ''.join(random.choices(string.digits, k=8))
-    data = {
-        "HeaderImg": "",
-        "LastName": last,
-        "FirstName": first,
-        "PhoneNumber": phone,
-        "Email": email,
-        "VerificationMethod": "email",
-        "VerificationCode": vcode,
-        "CaptchaTicket": "",
-        "AcceptedPrivacyStatement": True,
-        "IsEmailSubscribed": False,
-        "OpenId": "",
-        "Source": "",
-        "InviteCode": "",
-    }
-    try:
-        j = http_post_json(REGISTER_URL, data)
-    except Exception as e:
-        return None, str(e)
-    status = j.get("Status")
-    if status == 1:
-        token = j.get("Data", "")
-        print(f"注册成功: {email}  token={str(token)[:40]}")
-        return token, ""
-    else:
-        return None, j.get("Message", "未知错误")
+def get_apikey(page) -> str:
+    llm_panel = page.locator('section.ma-section:nth-child(2) > div:nth-child(3) > div:nth-child(1)').first
+    llm_panel.click()
+    view_btn = page.locator('.anticon-eye-invisible').first
+    view_btn.click()
+    key_text = page.locator('.ant-input-sm').first
+    return key_text.input_value()
 
-def reg_amd_all() -> bool:
+def reg_amd_retry(acc, retry=5) -> bool:
+    for _ in range(retry):
+        try:
+            succ = reg_amd(acc)
+            if succ: return True
+        except:
+            traceback.print_exc()
+    return False
+
+def reg_amd(acc) -> bool:
     """完整注册流程（全部在浏览器中完成，不再使用 CaptchaTicket）。
 
     流程：
@@ -679,11 +620,7 @@ def reg_amd_all() -> bool:
       6. 检查注册结果，写入 amd.txt
     """
     # 1. 取 Outlook 账号（作为注册邮箱 + 收信账号）
-    acct = _next_outlook_account()
-    if not acct:
-        print("无法继续：未配置 Outlook 账号（outlook_emails.txt）")
-        return False
-    email, client_id, refresh_token = acct
+    email, client_id, refresh_token = acc
 
     print(f"邮箱: {email}")
 
@@ -758,9 +695,10 @@ def reg_amd_all() -> bool:
 
             if registered:
                 print(f"注册成功: {email}")
+                apikey = get_apikey(page)
                 dttmstr = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
                 with open('amd.txt', 'a', encoding='utf8') as f:
-                    f.write(f'{dttmstr}----{email}\n')
+                    f.write(f'{dttmstr}----{email}----{apikey}\n')
                 return True
             
             # 验证码错误，继续下一次重试（重新获取验证码）
@@ -836,9 +774,10 @@ def login_amd(page, email: str, client_id, refresh_token) -> bool:
 
     if login:
         print(f"登录成功: {email}")
+        apikey = get_apikey(page)
         dttmstr = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
         with open('amd.txt', 'a', encoding='utf8') as f:
-            f.write(f'{dttmstr}----{email}\n')
+            f.write(f'{dttmstr}----{email}----{apikey}\n')
         return True
 
     print(f"[login] 登录后未跳转到 tokenfactory，当前 URL: {page.url}")
@@ -846,12 +785,9 @@ def login_amd(page, email: str, client_id, refresh_token) -> bool:
 
 
 def main():
-    while True:
-        succ = reg_amd_all()
-        if succ:
-            time.sleep(10)
-        else:
-            time.sleep(600)
+    accounts = _load_outlook_accounts()
+    for acc in accounts:
+        reg_amd_retry(acc)
 
 
 if __name__ == '__main__':
