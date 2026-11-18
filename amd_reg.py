@@ -783,10 +783,22 @@ def login_amd(page, email: str, client_id, refresh_token) -> bool:
     print(f"[login] 登录后未跳转到 tokenfactory，当前 URL: {page.url}")
     return False
 
+def load_regged():
+    lines = open('amd.txt', encoding='utf8').read().split('\n')
+    res = set()
+    for l in lines:
+        tmp = l.split('----')
+        if len(tmp) < 2: continue
+        res.add(tmp[1])
+    return res
 
 def main():
     accounts = _load_outlook_accounts()
+    regged = load_regged()
     for acc in accounts:
+        if acc[0] in regged:
+            print(f'{acc[0]} 已注册，跳过')
+            continue
         reg_amd_retry(acc)
 
 
