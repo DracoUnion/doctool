@@ -28,21 +28,29 @@ def main():
     with camou_create_driver(True) as (br, ctx, page):
         ctx.add_cookies(cookies)
         page.goto("https://www.zhipin.com/web/geek/jobs?ka=header-jobs") 
-        jobs = page.locator('.job-info').all()
-        for j in jobs:
-            j.click(force=True)
-            info = page.locator('.job-detail-info').inner_text().strip()
-            print(info)
-            chat_btn = page.locator('.op-btn-chat').first
-            btn_text = chat_btn.inner_text().strip()
-            if '立即沟通' not in btn_text: 
-                print('已沟通，跳过')
-                continue
-            chat_btn.click(force=True)
-            print('点击沟通按钮')
-            stay_btn = page.locator('a.default-btn:nth-child(1)').first
-            stay_btn.click(force=True)
-            print('点击留在此页')
-            time.sleep(1 + random.uniform(0, 1))
+        already = 0
+        while True:
+            jobs = page.locator('.job-info').all()
+            if already == len(jobs): break
+            for j in jobs[already:]:
+                j.click(force=True)
+                info = page.locator('.job-detail-info').inner_text().strip()
+                print(info)
+                chat_btn = page.locator('.op-btn-chat').first
+                btn_text = chat_btn.inner_text().strip()
+                if '立即沟通' not in btn_text: 
+                    print('已沟通，跳过')
+                    continue
+                chat_btn.click(force=True)
+                print('点击沟通按钮')
+                stay_btn = page.locator('a.default-btn:nth-child(1)').first
+                stay_btn.click(force=True)
+                print('点击留在此页')
+                time.sleep(1 + random.uniform(0, 1))
+            
+            already = len(jobs)
+            print('滚动到底部')
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            time.sleep(2)
 
 if __name__ == '__main__': main()
