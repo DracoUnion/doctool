@@ -411,26 +411,37 @@ def _find_gap_x(bg: np.ndarray) -> int:
 
 
 def _drag_slider(page, sb, distance: float) -> None:
-    """执行滑块拖拽操作。
+    """模拟人类拖拽滑块完成阿里云人机验证。
+
+    采用“快-慢-回退-精确”四段式轨迹，模拟真人操作以降低风控拦截概率：
+      1. 快速段：前 70% 距离以较大步长（4~8px）快速移动，每步随机休眠 10~50ms；
+      2. 小回退：回退 3px，模拟人手微调；
+      3. 精确段：剩余距离以极小步长（2~4px）匀速移动，每步随机休眠 10~30ms；
+      4. 松开：停留 200ms 后松开鼠标，再等待 5s 让页面校验结果。
 
     Args:
-        page: Playwright Page 对象（用于鼠标操作）
-        target: 操作上下文（主页面或包含滑块的 iframe）
-        sb: 滑块的 bounding_box
-        distance: 拖拽距离（已加滑块宽度修正）
+        page: Playwright Page 对象，用于 page.mouse 进行真实鼠标操作。
+        sb: 滑块元素的 bounding_box，包含 x, y, width, height，用于计算滑块中心
+            初始位置和拖拽终点。
+        distance: 拖拽总距离（像素），已在调用方加上滑块宽度修正，正数表示
+            向右拖，负数表示向左拖。若绝对值小于等于 5px 则直接跳过。
+
+    Returns:
+        None。鼠标操作直接作用于浏览器页面，无返回值。
     """
+    # 拖拽距离过小，无需移动，直接返回避免误触
     if abs(distance) <= 5:
         print("[captcha] 拖拽距离过小，跳过拖拽")
         return
 
-    # 移动到滑块中心并按下
-    page.mouse.move(sb["x"] + sb["width"] / 2, sb["y"] + sb["height"] / 2)
-    page.mouse.down()
-
+    # ===== 第 1 段：快速移动（前 70%） =====
+    # 以较大步长快速推进，模拟人手迅速将滑块推向目标区域
+    # 每步移动 4~8 像素，并加入随机垂直抖动（-3~3px）和随机休眠（10~50ms）
+    # 使轨迹更具人类特征，避免被风控系统识别为机械匀速移动
     adist = int(abs(distance))
-    step_dir = 1 if distance > 0 else -1
+    step_dir = 1 if distance > 0 else -1  # 拖拽方向：1 向右，-1 向左
     current = 0
-    seg1 = int(adist * 0.7)
+    seg1 = int(adist * 0.7)  # 快速段覆盖总距离的 70%
     while current < seg1:
         step = random.uniform(4, 8)
         current = min(current + step, seg1)
@@ -439,13 +450,18 @@ def _drag_slider(page, sb, distance: float) -> None:
             sb["y"] + sb["height"] / 2 + random.randint(-3, 3),
         )
         page.wait_for_timeout(random.uniform(10, 50))
-    # 小回退
+
+    # ===== 第 2 段：小回退 =====
+    # 向回退 3px，模拟人手在接近目标时的微调动作，增加轨迹自然度
     page.mouse.move(
         sb["x"] + sb["width"] / 2 + seg1 * step_dir - 3 * step_dir,
         sb["y"] + sb["height"] / 2,
     )
     page.wait_for_timeout(100)
-    # 最后精确段（保持较快匀速，不再减速）
+
+    # ===== 第 3 段：精确移动（剩余 30%） =====
+    # 以极小步长（2~4px）缓慢推进，精确对齐缺口边缘
+    # 垂直抖动减小到 -1~1px，休眠时间缩短到 10~30ms，保持稳定
     while current < adist:
         step = random.uniform(2, 4)
         current = min(current + step, adist)
@@ -454,49 +470,94 @@ def _drag_slider(page, sb, distance: float) -> None:
             sb["y"] + sb["height"] / 2 + random.randint(-1, 1),
         )
         page.wait_for_timeout(random.uniform(10, 30))
+
+    # ===== 第 4 段：松开鼠标 =====
+    # 停留 200ms 让页面完成滑块位置校验，再松开鼠标
     page.wait_for_timeout(200)
     page.mouse.up()
     print("[captcha] drag performed")
+    # 拖拽完成后等待 5s，给页面足够时间处理校验结果并显示“发送成功”状态
     page.wait_for_timeout(5000)
 
+
 def calc_slider_distance(page):
+    """计算阿里云滑块验证码需要拖拽的像素距离。
+
+    流程：
+      1. 从页面定位背景图（img#aliyunCaptcha-img）和滑块图（img#aliyunCaptcha-puzzle）；
+      2. 将两张图的 Base64 数据解码为 OpenCV 可处理的 numpy 数组；
+      3. 获取背景图在页面上的显示位置（bounding_box），计算原始图像到页面显示的
+         缩放比例 scale_x；
+      4. 调用 _find_gap_x(bg) 在背景图中定位拼图缺口的中心 x 坐标（原始图像素）；
+      5. 将缺口中心坐标映射到页面坐标系：gap_center_page_x = box.x + gap_x * scale_x；
+      6. 获取滑块元素的 bounding_box，计算滑块中心在页面上的 x 坐标；
+      7. 拖拽距离 = 缺口中心页面 x - 滑块中心页面 x，再加上滑块宽度修正（因为
+         滑块拖到“缺口中心 - 滑块中心”后，滑块尚未完全填入缺口，需再向右平移
+         一个滑块宽度才能对齐缺口右侧边缘完成验证）。
+
+    Args:
+        page: Playwright Page 对象，用于定位页面元素和获取图片 src / bounding_box。
+
+    Returns:
+        (sb, distance) 元组：
+          - sb: 滑块元素的 bounding_box（dict，含 x, y, width, height），若获取失败则为 None；
+          - distance: 拖拽距离（像素，浮点数），已包含滑块宽度修正。
+        若无法获取滑块位置，返回 (None, None)。
+    """
+    # 定位页面上的背景图和滑块图 DOM 元素（阿里云验证码固定 id）
     img_slider_el = page.locator('img#aliyunCaptcha-puzzle').first
     img_bg_el = page.locator('img#aliyunCaptcha-img').first
+
+    # 读取两张图的 data:image base64 编码 src
     bg_src = img_bg_el.get_attribute("src")
     slide_src = img_slider_el.get_attribute("src")
-    # print(bg_src)
-    # print(slide_src)
+
+    # 解码背景图：data:image 前缀表示 Base64 内嵌，直接解码；
+    # 否则为普通 URL，通过 requests 下载图片内容
     if bg_src.startswith('data:image'):
         bg_b64 = bg_src.split(',', 1)[1]
         img_bg = base64.b64decode(bg_b64)
     else:
         img_bg = requests.get(bg_src).content
+
+    # 解码滑块图，同上
     if slide_src.startswith('data:image'):
         slide_b64 = slide_src.split(',', 1)[1]
         img_slide = base64.b64decode(slide_b64)
     else:
         img_slide = requests.get(slide_src).content
+
+    # 将字节流转为 OpenCV 图像（BGR 格式 numpy 数组）
     bg = cv2.imdecode(np.frombuffer(img_bg, np.uint8), cv2.IMREAD_COLOR)
     slide = cv2.imdecode(np.frombuffer(img_slide, np.uint8), cv2.IMREAD_COLOR)
     print(f"[captcha] bg={bg.shape} slide={slide.shape}")
 
-    # 背景图在页面上的显示位置（用于把原始图坐标映射到页面坐标）
+    # 获取背景图在页面上的显示位置和尺寸，用于坐标映射
+    # box.width 是页面显示宽度，bg.shape[1] 是原始图像素宽，两者之比为缩放比例
     box = img_bg_el.bounding_box()
     scale_x = box["width"] / bg.shape[1]
 
+    # 在背景图中定位拼图缺口的中心 x 坐标（原始图像素坐标）
     gap_center_orig_x = _find_gap_x(bg)
     print(f"[captcha] gap_x(orig)={gap_center_orig_x} bg_w={bg.shape[1]}")
+
+    # 将原始图坐标映射到页面显示坐标：页面 x = 页面左上角 x + 原始 x * 缩放比例
     gap_center_page_x = box["x"] + gap_center_orig_x * scale_x
 
+    # 获取滑块元素在页面上的 bounding_box，计算滑块当前中心 x 坐标
     slider = page.locator('.slider-move').first
     sb = slider.bounding_box()
     if sb is None:
         print("[captcha] 无法获取滑块位置")
         return None, None
     slider_center_x = sb["x"] + sb["width"] / 2
+
+    # 原始拖拽距离：从滑块中心移动到缺口中心
     distance = gap_center_page_x - slider_center_x
-    # 滑块拖到“缺口中心 - 滑块中心”位置后，滑块还未完全填入缺口，
-    # 实际需要再向右平移一个滑块宽度，才能对齐缺口右侧边缘完成验证。
+
+    # 关键修正：滑块拖到“缺口中心 - 滑块中心”后，滑块仅对齐缺口中心，
+    # 尚未完全填入缺口，需要再向右平移一个滑块宽度，使滑块右边缘对齐缺口右边缘，
+    # 才能完成验证。因此总距离加上滑块宽度。
     distance += sb["width"]
     print(f"[captcha] drag_distance(修正后, +滑块宽度)={distance:.1f}")
     return sb, distance
