@@ -545,22 +545,31 @@ def calc_slider_distance(page):
     gap_center_page_x = box["x"] + gap_center_orig_x * scale_x
 
     # 获取滑块元素在页面上的 bounding_box，计算滑块当前中心 x 坐标
-    slider = page.locator('.slider-move').first
-    sb = slider.bounding_box()
-    if sb is None:
+    slider = page.locator('#aliyunCaptcha-sliding-slider').first
+    slider_bbox = slider.bounding_box()
+    if slider_bbox is None:
         print("[captcha] 无法获取滑块位置")
         return None, None
-    slider_center_x = sb["x"] + sb["width"] / 2
+    slider_center_x = slider_bbox["x"] + slider_bbox["width"] / 2
 
     # 原始拖拽距离：从滑块中心移动到缺口中心
     distance = gap_center_page_x - slider_center_x
 
-    # 关键修正：滑块拖到“缺口中心 - 滑块中心”后，滑块仅对齐缺口中心，
-    # 尚未完全填入缺口，需要再向右平移一个滑块宽度，使滑块右边缘对齐缺口右边缘，
-    # 才能完成验证。因此总距离加上滑块宽度。
-    distance += sb["width"]
+    # 关键修正：滑块和图案是不同步的，经过观察，滑块在两端时，图案和滑块对齐
+    # 滑块在中间时，图案和滑块差一个滑块宽度
+    # 所以这二者之间差了滑块位置到滑动条中心的一个比例
+    # 因此总距离加上滑块宽度乘以这个比例。
+    slider_bar = page.locator('#aliyunCaptcha-sliding-text-box')
+    slider_bar_bbox = slider_bar.bounding_box()
+    if slider_bar_bbox is None:
+        print("[captcha] 无法获取滑动条位置")
+        return None, None
+    slider_bar_center_x = slider_bar_bbox["x"] + slider_bar_bbox["width"] / 2
+    ratio = abs(gap_center_page_x - slider_bar_center_x) / (slider_bar_bbox["width"] / 2)
+    print(f'[captcha] ratio: {ratio}')
+    distance += int(slider_bbox["width"] * ratio)
     print(f"[captcha] drag_distance(修正后, +滑块宽度)={distance:.1f}")
-    return sb, distance
+    return slider_bbox, distance
 
 def _fill_reg_info(page, email):
     # 填邮箱
