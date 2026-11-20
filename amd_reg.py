@@ -22,6 +22,7 @@
 
 用法：
     export CF_EMAIL_ADMIN_PW=（已不再需要，保留兼容）
+    export https_proxy=http://127.0.0.1:7890  # 如需代理，设置 https_proxy 环境变量
     python amd_reg.py          # 循环注册
     python -c "import amd_reg; amd_reg.reg_amd_all()"  # 跑一次
 """
@@ -95,6 +96,10 @@ def _launch_trusted_camoufox():
 
     返回 (Camoufox, Page)；调用方负责在 finally 里对 Camoufox 调用 __exit__() 清理。
     内置重试，对付间歇性 TLS 握手失败。
+
+    代理支持：
+        若环境变量 https_proxy（或 HTTPS_PROXY）已设置，则将其值作为代理服务器
+        传给 Camoufox，所有浏览器请求均通过该代理发出。
     """
     prof = _ensure_trusted_profile()
     opts = _camoufox_launch_options(headless=False, locale="zh-CN")
@@ -103,6 +108,12 @@ def _launch_trusted_camoufox():
     opts["persistent_context"] = True
     opts.pop("executable_path", None)
     opts["no_viewport"] = True
+
+    # 读取环境变量 https_proxy，若设置则配置 Camoufox 代理
+    proxy_url = os.environ.get("https_proxy") or os.environ.get("HTTPS_PROXY")
+    if proxy_url:
+        opts["proxy"] = {"server": proxy_url}
+        print(f"[proxy] 使用代理: {proxy_url}")
 
     with Camoufox(**opts) as browser:
         browser.clear_cookies()
