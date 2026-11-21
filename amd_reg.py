@@ -601,7 +601,7 @@ def _fill_reg_info(page, email):
     #   第一个未填的 -> First Name，第二个 -> Last Name，第三个 -> Phone Number
     name1_inp = page.locator('label.form-item:nth-child(1) > input:nth-child(2)').first
     name2_inp = page.locator('label.form-item:nth-child(2) > input:nth-child(2)').first
-    phone_inp = page.locator('label.form-item:nth-child(3) > input:nth-child(2)').first
+    phone_inp = page.locator('.phone-local-input').first
     name1_inp.fill("")
     name1_inp.type(first, delay=15)
     print(f"[captcha] 填写名称 {first}")
@@ -673,12 +673,12 @@ def solve_captcha_and_send_code(page) -> bool:
     return captcha_vanished
 
 def get_apikey(page) -> str:
-    llm_panel = page.locator('section.ma-section:nth-child(2) > div:nth-child(3) > div:nth-child(1)').first
-    llm_panel.click()
-    view_btn = page.locator('.anticon-eye-invisible').first
+    # llm_panel = page.locator('section.ma-section:nth-child(2) > div:nth-child(3) > div:nth-child(1)').first
+    # llm_panel.click()
+    view_btn = page.locator('div.access-row:nth-child(3) > span:nth-child(3) > button:nth-child(1)').first
     view_btn.click()
-    key_text = page.locator('.ant-input-sm').first
-    return key_text.input_value()
+    key_text = page.locator('div.access-row:nth-child(3) > code:nth-child(2)').first
+    return key_text.inner_text().strip()
 
 def reg_amd_retry(acc, retry=5) -> bool:
     for _ in range(retry):
@@ -802,7 +802,9 @@ def login_amd(page, email: str, client_id, refresh_token) -> bool:
     print(f"[login] 已跳转到登录页: {page.url}")
 
     # 填邮箱
-    email_input = page.locator('input.login-input:nth-child(4)').first
+    email_radio = page.locator('div.van-radio:nth-child(2)').first
+    email_radio.click()
+    email_input = page.locator('input.login-input:nth-child(2)').first
     email_input.fill("")
     email_input.type(email, delay=15)
     print(f"[login] 已填邮箱: {email}")
