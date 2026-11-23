@@ -26,17 +26,14 @@ import base64
 import sys
 import time
 import traceback
-import string
 
 from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 from urllib.parse import quote_plus
 
-import cv2
-import numpy as np
-import ddddocr
 import tqdm
 from pyquery import PyQuery as pq
+from BookerDownloadTool.openai import OpenAIClient
 from BookerDownloadTool.util import to_kebab, request_retry, fname_escape
 from BookerDownloadTool.cdp import cdp_create_driver, CdpPage
 
@@ -64,54 +61,40 @@ _DDOS_DETECT_JS = """(() => {
            !!document.querySelector('#ddg-captcha, #ddg-iframe, #request-info');
 })()"""
 
-def preprocess_captcha(img_data):
-    # 1. 读取图像
-    img = cv2.imdecode(
-        np.frombuffer(img_data, np.uint8),
-        cv2.IMREAD_COLOR,
-    )
-    
-    # 2. 裁剪边缘（去除可能存在的外边框干扰，建议按需留出 2px 边距）
-    h, w = img.shape[:2]
-    img_cropped = img[2:h-2, 2:w-2]
+CAPTCHA_OCR_PROMPT = (
+    '请识别这张验证码图片中的字符，可能包含大小写字母和数字，'
+    '可能有少量干扰线/噪点，请忽略它们。'
+    '直接输出识别到的字符序列，不要加引号、空格或任何解释。'
+)
 
-    # 3. 灰度化
-    gray = cv2.cvtColor(img_cropped, cv2.COLOR_BGR2GRAY)
-
-    # 4. 滤波降噪（中值滤波保护边缘）
-    blurred = cv2.medianBlur(gray, 3)
-
-    # 5. 自适应二值化（应对不均匀光照，抗干扰能力更强）
-    # blockSize 可依据字符像素粗细在 11~31 间微调
-    thresh = cv2.adaptiveThreshold(
-        blurred, 255, 
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-        cv2.THRESH_BINARY_INV, 15, 8
+def build_vlm_args(args):
+    """构造 call_vlm_retry 需要的参数 Namespace（缺失字段给默认值）。"""
+    return argparse.Namespace(
+        retry=getattr(args, 'retry', 5),
+        temp=getattr(args, 'temp', 0.1),
+        top_p=getattr(args, 'top_p', None),
+        frequency_penalty=getattr(args, 'frequency_penalty', None),
+        presence_penalty=getattr(args, 'presence_penalty', None),
+        max_tokens=getattr(args, 'max_tokens', None),
+        extra_body=getattr(args, 'extra_body', ''),
     )
 
-    # 6. 形态学开运算（断开图中细小的红紫干扰线）
-    kernel = np.ones((2, 2), np.uint8)
-    processed = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
-
-    # 7. 编码为字节流供 ddddocr 使用
-    is_success, buffer = cv2.imencode(".png", processed)
-    if not is_success:
-        return None
-    return buffer.tobytes()
-
-def recognize_captcha(img_data):
-    # 初始化 OCR，开启新版模型并指定模型下载目录
-    ocr = ddddocr.DdddOcr(old=False, show_ad=False)
-
-    # 限定可能出现的字母数字范围（如纯小写字母或指定数字），减少同类字符误判
-    # 例如：若目标只含字母和数字，可设为 "abcdefghijklmnopqrstuvwxyz0123456789"
-    ocr.set_ranges(string.ascii_letters + string.digits)
-
-    processed_bytes = preprocess_captcha(img_data)
-
-    # 执行识别
-    result = ocr.classification(processed_bytes)
-    return result
+def recognize_captcha(img_data, args):
+    """调用大模型视觉接口识别验证码图片。"""
+    vmodel = getattr(args, 'vmodel', None) or os.environ.get('OPENAI_VIS_MODEL', '')
+    if not vmodel:
+        raise ValueError(
+            '未配置视觉模型：请设置 OPENAI_VIS_MODEL 环境变量，'
+            '或在命令行用 -vm/--vmodel 指定'
+        )
+    client = OpenAIClient(
+        api_key=getattr(args, 'key', None) or os.environ.get('OPENAI_API_KEY'),
+        base_url=getattr(args, 'host', None) or os.environ.get('OPENAI_BASE_URL'),
+    )
+    return client.call_vlm_retry(
+        img_data, CAPTCHA_OCR_PROMPT, vmodel, build_vlm_args(args),
+        parse_output=lambda s: re.sub(r'[^0-9A-Za-z]', '', s.strip()),
+    )
 
 def is_captcha_challenge(page: CdpPage, el_chk: str):
     page.wait_for_selector(selectors['captcha_iframe'] + ', ' + el_chk)
@@ -131,7 +114,7 @@ def wait_for_captcha_img(page: CdpPage):
             return img_url
         time.sleep(0.5)
 
-def wait_for_captcha_clear(page: CdpPage, el_chk: str, timeout_ms=600_000):
+def wait_for_captcha_clear(page: CdpPage, el_chk: str, timeout_ms=600_000, args=None):
     """等待用户在可见 Chrome 窗口中完成人工验证。"""
     # self.send('Page.bringToFront', timeout_ms=10_000)
     print(f'等待验证码模块加载...')
@@ -158,7 +141,7 @@ def wait_for_captcha_clear(page: CdpPage, el_chk: str, timeout_ms=600_000):
     print('img_url: ' + img_url[:50] + '...')
     img_data = img_url[len('data:image/png;base64,'):]
     img_data = base64.b64decode(img_data)
-    res = recognize_captcha(img_data)
+    res = recognize_captcha(img_data, args)
     print(f'识别结果：{res}')
     print('提交验证码...')
     page.evaluate(f'''
@@ -179,21 +162,23 @@ def wait_for_captcha_clear(page: CdpPage, el_chk: str, timeout_ms=600_000):
 # ─────────────────────────── 原 annas.py 的逻辑（仅替换 driver） ───────────────────────────
 
 def cdp_get_html(page: CdpPage, url: str, el_chk: str = None,
-                 ddos_timeout_ms=600_000, label='', headless=False) -> str:
+                 ddos_timeout_ms=600_000, label='', headless=False,
+                 args=None) -> str:
     """导航页面，必要时等待用户完成 DDoS-Guard 人工验证。"""
     page.goto(url)
     while is_captcha_challenge(page, el_chk):
-        wait_for_captcha_clear(page, el_chk, ddos_timeout_ms)
+        wait_for_captcha_clear(page, el_chk, ddos_timeout_ms, args)
     if el_chk:
         page.wait_for_selector(el_chk)
     return page.html()
 
 
 def cdp_get_html_retry(page: CdpPage, url: str, el_chk: str = None, retry: int = 10,
-                       ddos_timeout_ms=600_000, label='', headless=False) -> str:
+                       ddos_timeout_ms=600_000, label='', headless=False,
+                       args=None) -> str:
     for i in range(retry):
         try:
-            return cdp_get_html(page, url, el_chk, ddos_timeout_ms, label, headless)
+            return cdp_get_html(page, url, el_chk, ddos_timeout_ms, label, headless, args)
         except KeyboardInterrupt:
             raise
         except Exception:
@@ -240,7 +225,7 @@ def annas_fetch(args):
     # https://annas-archive.gl/search
     # ?index=&page=1&sort=newest&content=book_nonfiction
     # &content=book_unknown&ext=pdf&ext=epub&lang=en&display=&q=tarot
-    with cdp_create_driver(args.headless) as page:
+    with cdp_create_driver(not args.no_headless) as page:
         f = open(args.ofname, 'a', encoding='utf8')
         qry_ext = ''.join(f'&ext={e}' for e in args.ext)
         qry_cont = ''.join(f'&content={c}' for c in args.content)
@@ -254,7 +239,7 @@ def annas_fetch(args):
             )
             print(url)
             html = cdp_get_html_retry(page, url, '.header-inner-top', args.retry,
-                                      args.ddos_timeout, f'search:{i}', args.headless)
+                                      args.ddos_timeout, f'search:{i}', not args.no_headless, args)
             rt = pq(html)
             el_links = rt.find('a.text-lg[href^="/md5/"]')
             if not el_links:
@@ -274,11 +259,11 @@ def annas_fetch(args):
 
 
 def download_annas(args):
-    with cdp_create_driver(args.headless) as page:
+    with cdp_create_driver(not args.no_headless) as page:
         hash_ = args.hash
         url = f'https://{HOST}/md5/{hash_}'
         html = cdp_get_html_retry(page, url, '.text-gray-800', args.retry,
-                                  args.ddos_timeout, f'md5:{hash_}', args.headless)
+                                  args.ddos_timeout, f'md5:{hash_}', not args.no_headless, args)
         rt = pq(html)
         title = rt.find('div.font-semibold:nth-child(4)') \
             .text().strip().replace(' 🔍', '')
@@ -301,7 +286,7 @@ def download_annas(args):
         url = f'https://{HOST}{url}'
         # url = f'https://{HOST}/slow_download/{hash_}/0/{idx}'
         html = cdp_get_html_retry(page, url, '.bg-gray-200', args.retry,
-                                  args.ddos_timeout, f'slow:{hash_}', args.headless)
+                                  args.ddos_timeout, f'slow:{hash_}', not args.no_headless, args)
         rt = pq(html)
         link = rt.find('.bg-gray-200').eq(0).text().strip()
         r = request_retry('GET', link, headers=dft_hdr, stream=True,
@@ -347,25 +332,35 @@ def annas_dedup(args):
 
 # ─────────────────────────── CLI ───────────────────────────
 
+def add_vlm_args(parser):
+    """验证码识别（大模型视觉）相关参数。"""
+    parser.add_argument("--key", default=None, help="OpenAI API Key（默认取 OPENAI_API_KEY）")
+    parser.add_argument("--host", default=None, help="API 地址（默认取 OPENAI_BASE_URL）")
+    parser.add_argument("-vm", "--vmodel", default=None,
+                        help="视觉模型名称（默认取 OPENAI_VIS_MODEL）")
+
+
 def reg_subparser(subparsers):
     dl_annas_parser = subparsers.add_parser("annas", help="下载文件")
     dl_annas_parser.add_argument("hash", help="文件哈希")
-    dl_annas_parser.add_argument("-H", "--headless", action='store_true', help="无头模式")
+    dl_annas_parser.add_argument("-H", "--no_headless", action='store_true', help="有头模式")
     dl_annas_parser.add_argument("-r", "--retry", type=int, default=10, help="重试")
     dl_annas_parser.add_argument("--ddos-timeout", type=int, default=600,
                                  help="人工验证最长等待秒数")
+    add_vlm_args(dl_annas_parser)
     dl_annas_parser.set_defaults(func=download_annas)
 
     annas_batch_parser = subparsers.add_parser("annas-batch", help="下载文件")
     annas_batch_parser.add_argument("flist", help="JSONL 列表文件")
-    annas_batch_parser.add_argument("-t", "--threads", type=int, default=8, help="线程数")
+    annas_batch_parser.add_argument("-t", "--threads", type=int, default=4, help="线程数")
     annas_batch_parser.add_argument("-s", "--site", default='annas',
                                     choices=['slow', 'bt', 'lgli'], help="站点")
     annas_batch_parser.add_argument("-st", "--start", type=int, default=0, help="起始")
     annas_batch_parser.add_argument("-r", "--retry", type=int, default=10, help="重试")
     annas_batch_parser.add_argument("--ddos-timeout", type=int, default=600,
                                     help="人工验证最长等待秒数")
-    annas_batch_parser.add_argument("-H", "--headless", action='store_true', help="无头模式")
+    annas_batch_parser.add_argument("-H", "--no_headless", action='store_true', help="有头模式")
+    add_vlm_args(annas_batch_parser)
     annas_batch_parser.set_defaults(func=annas_batch)
 
     annas_fetch_parser = subparsers.add_parser("annas-fetch", help="抓取搜索列表")
@@ -382,7 +377,8 @@ def reg_subparser(subparsers):
     annas_fetch_parser.add_argument("--ddos-timeout", type=int, default=600,
                                     help="人工验证最长等待秒数")
     annas_fetch_parser.add_argument("-y", "--year", type=int, help="年份")
-    annas_fetch_parser.add_argument("-H", "--headless", action='store_true', help="无头模式")
+    annas_fetch_parser.add_argument("-H", "--no_headless", action='store_true', help="有头模式")
+    add_vlm_args(annas_fetch_parser)
     annas_fetch_parser.set_defaults(func=annas_fetch)
 
     annas_dedup_parser = subparsers.add_parser("annas-dedup", help="去重文件")
@@ -400,7 +396,7 @@ def main():
     subparsers = parser.add_subparsers()
     reg_subparser(subparsers)
     args = parser.parse_args()
-    args.headless = getattr(args, 'headless', False)
+    args.no_headless = getattr(args, 'no_headless', False)
     args.ddos_timeout = getattr(args, 'ddos_timeout', 600) * 1000
     args.func(args)
 
